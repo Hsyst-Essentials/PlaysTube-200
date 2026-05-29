@@ -1,4 +1,4 @@
-# PlaysTube v3.0.0
+# PlaysTube v2.0.0
 
 Plataforma de compartilhamento de vídeos com suporte a lives, similar ao YouTube, construída com **Node.js**, **Express**, **SQLite**, **Socket.IO**, **FFmpeg** e **Node-Media-Server**.
 
