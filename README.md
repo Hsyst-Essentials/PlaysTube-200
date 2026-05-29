@@ -30,8 +30,8 @@ PlaysTube é uma plataforma completa de vídeo que suporta:
 ### 1. Clone e instale
 
 ```bash
-git clone https://github.com/op3ny/playstube.git
-cd playstube
+https://github.com/Hsyst-Essentials/PlaysTube-200
+cd PlaysTube-200
 npm install
 ```
 
@@ -311,4 +311,4 @@ Distribuído sob a **Unlicense** — domínio público. Sinta-se livre para usar
 
 **Thaís** — [@op3ny](https://github.com/op3ny)
 
-Feito com carinho para a comunidade <3
+Feito com carinho para a comunidade e [Hsyst Essentials](https://github.com/Hsyst-Essentials) <3
