@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= channel.name %> - PlaysTube v3.0.0</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-enter">
+  <!-- Navbar -->
+  <nav class="glass-nav">
+    <div class="navbar">
+      <a href="/" class="navbar-brand">
+        <div class="navbar-logo">
+          <i class="fas fa-play text-white text-xs"></i>
+        </div>
+        <span class="gradient-text">PlaysTube</span>
+      </a>
+      
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Buscar vídeos...">
+        <button id="btn-search"><i class="fas fa-search"></i></button>
+      </div>
+      
+      <div class="flex items-center gap-4" id="user-menu">
+        <a href="/auth" class="glass-button">Entrar</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Channel Header -->
+  <div class="glass" style="border-radius:0;border-left:none;border-right:none;">
+    <% if (channel.banner_url) { %>
+      <div style="height:12rem;background-size:cover;background-position:center;background-image:url('<%= channel.banner_url %>')"></div>
+    <% } else { %>
+      <div style="height:6rem;background:var(--gradient-primary);opacity:.3;"></div>
+    <% } %>
+    
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div style="display:flex;flex-direction:column;gap:1.5rem;align-items:flex-start;">
+        <div style="display:flex;align-items:center;gap:1rem;margin-top:-4rem;">
+          <% if (channel.avatar_url && channel.avatar_url.trim() !== '') { %>
+            <img src="<%= channel.avatar_url %>" class="channel-avatar" style="width:96px;height:96px;border:4px solid var(--surface);">
+          <% } else { %>
+            <div class="channel-avatar" style="width:96px;height:96px;font-size:2rem;border:4px solid var(--surface);">
+              <%= channel.name.charAt(0).toUpperCase() %>
+            </div>
+          <% } %>
+          
+          <div>
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;">
+              <h1 style="font-size:1.75rem;font-weight:700;"><%= channel.name %></h1>
+              <% if (channel.pronouns) { %>
+                <span style="color:var(--text-muted);font-size:.875rem;">(<%= channel.pronouns %>)</span>
+              <% } %>
+            </div>
+            <p style="color:var(--text-muted);"><%= channel.video_count || 0 %> vídeos</p>
+            
+            <% if (channel.description) { %>
+              <p style="color:var(--text-secondary);margin-top:.5rem;"><%= channel.description %></p>
+            <% } %>
+          </div>
+        </div>
+        
+        <div style="display:flex;gap:.75rem;">
+          <% if (typeof isOwner !== 'undefined' && isOwner) { %>
+            <a href="/creator" class="glass-button">
+              <i class="fas fa-cog"></i> Editar Canal
+            </a>
+          <% } else { %>
+            <button id="subscribe-btn" class="glass-button danger">
+              <i class="fas fa-bell"></i> Inscrever-se
+            </button>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live -->
+  <% if (typeof live !== 'undefined' && live) { %>
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+    <h2 class="section-title"><i class="fas fa-broadcast-tower" style="color:<%= live.status === 'live' ? 'var(--red)' : 'var(--purple-light)' %>;"></i> Ao Vivo</h2>
+    <a href="/live/<%= channel.id %>" class="glass-card" style="display:block;overflow:hidden;">
+      <div class="relative" style="aspect-ratio:16/9;background:#000;display:flex;align-items:center;justify-content:center;">
+        <i class="fas fa-play text-white text-4xl"></i>
+        <% if (live.status === 'live') { %>
+        <span class="live-badge" style="position:absolute;top:1rem;left:1rem;">AO VIVO</span>
+        <% } else { %>
+        <span class="glass-badge" style="position:absolute;top:1rem;left:1rem;border-color:rgba(139,92,246,0.2);color:var(--purple-light);">EM BREVE</span>
+        <% } %>
+      </div>
+      <div style="padding:1rem;">
+        <h3 style="font-weight:700;"><%= live.title || (live.status === 'live' ? 'Ao Vivo - ' + channel.name : 'Live Agendada - ' + channel.name) %></h3>
+      </div>
+    </a>
+  </main>
+  <% } %>
+
+  <!-- Videos -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <h2 class="section-title"><i class="fas fa-film"></i> Vídeos</h2>
+    
+    <div class="video-grid">
+      <% if (typeof videos !== 'undefined' && videos.length > 0) { %>
+        <% videos.forEach(function(v) { %>
+          <a href="/video/<%= v.id %>" class="video-card">
+            <div class="video-card-thumb">
+              <img src="/static/<%= v.id %>/thumbnail.jpg" alt="<%= v.title %>">
+              <div class="absolute bottom-2 right-2 glass-badge"><%= v.views %> visualizações</div>
+            </div>
+            <div class="video-card-body">
+              <h3 class="video-card-title"><%= v.title %></h3>
+            </div>
+          </a>
+        <% }); %>
+      <% } else { %>
+        <div class="empty-state" style="grid-column:1/-1;">
+          <i class="fas fa-video-slash"></i>
+          <p>Este canal ainda não tem vídeos</p>
+          <% if (typeof isOwner !== 'undefined' && isOwner) { %>
+            <a href="/creator" class="glass-button mt-4">Enviar Primeiro Vídeo</a>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+  </main>
+
+  <script>
+    const API = "http://localhost:4000/api";
+    let token = document.cookie.split('token=')[1]?.split(';')[0];
+    if (!token) token = localStorage.getItem('token');
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('_token');
+    if (urlToken && !token) { token = urlToken; window.history.replaceState({}, '', window.location.pathname); }
+    const channelId = "<%= channel.id %>";
+    let isSubscribed = false;
+    
+    async function updateAuthUI() {
+      token = document.cookie.split('token=')[1]?.split(';')[0];
+      if (!token) return;
+      try {
+        const resp = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!resp.ok) return;
+        const user = await resp.json();
+        
+        localStorage.setItem('userAvatar', user.avatar_url || '');
+        
+        const avatarUrl = localStorage.getItem('userAvatar');
+        const avatarHtml = avatarUrl 
+          ? `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;">`
+          : user.name.charAt(0).toUpperCase();
+        
+        const menu = document.getElementById('user-menu');
+        menu.innerHTML = `
+          <a href="/creator" class="btn-icon" title="Creator Studio"><i class="fas fa-video"></i></a>
+          <button id="btn-logout" class="glass-button">Sair</button>
+          <a href="/user/${user.id}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+            ${avatarHtml}
+          </a>
+        `;
+        try {
+          const subResp = await fetch(`${API}/channels/${channelId}/subscribed`, { headers: { Authorization: `Bearer ${token}` } });
+          const subData = await subResp.json();
+          isSubscribed = subData.subscribed;
+          updateSubscribeBtn();
+        } catch (e) {}
+      } catch (e) {}
+    }
+    updateAuthUI();
+    
+    function updateSubscribeBtn() {
+      const btn = document.getElementById('subscribe-btn');
+      if (!btn) return;
+      if (isSubscribed) {
+        btn.innerHTML = '<i class="fas fa-bell-slash"></i> Inscrito';
+        btn.className = 'glass-button';
+      } else {
+        btn.innerHTML = '<i class="fas fa-bell"></i> Inscrever-se';
+        btn.className = 'glass-button danger';
+      }
+    }
+    
+    document.getElementById('subscribe-btn')?.addEventListener('click', async () => {
+      if (!token) { window.location.href = '/auth'; return; }
+      try {
+        if (isSubscribed) {
+          await fetch(`${API}/channels/${channelId}/subscribe`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+        } else {
+          await fetch(`${API}/channels/${channelId}/subscribe`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+        }
+        isSubscribed = !isSubscribed;
+        updateSubscribeBtn();
+      } catch (e) { alert('Erro ao processar inscrição'); }
+    });
+    
+    const savedTheme = localStorage.getItem('userTheme');
+    if (savedTheme) {
+      try {
+        const theme = JSON.parse(savedTheme);
+        const styles = document.createElement('style');
+        styles.textContent = `
+          .navbar-logo, .channel-avatar { background-color: ${theme.bg} !important; }
+          .theme-accent { color: ${theme.accent} !important; }
+        `;
+        document.head.appendChild(styles);
+      } catch (e) {}
+    }
+    
+function updateDynamicText() {
+      const saved = localStorage.getItem('userPronouns');
+      if (!saved) return;
+      try {
+        const p = JSON.parse(saved);
+        document.querySelectorAll('[data-dynamic-text]').forEach(el => {
+          const key = el.dataset.dynamicText;
+          if (key === 'possessive') el.textContent = p.possessive;
+          else if (key === 'article') el.textContent = p.article;
+          else if (key === 'possessive-plural') el.textContent = p.possessive + 's';
+          else if (key === 'user-no-channels') {
+            if (p.article === 'a') el.textContent = 'Esta usuária não possui canais';
+            else if (p.article === '') el.textContent = 'Esta pessoa não possui canais';
+            else el.textContent = 'Este usuário não possui canais';
+          }
+        });
+      } catch (e) {}
+    }
+    updateDynamicText();
+    
+    function $(sel) { return document.querySelector(sel); }
+    
+    $("#btn-search")?.addEventListener("click", () => {
+      const q = $("#search-input").value.trim();
+      if (q) window.location.href = "/?q=" + encodeURIComponent(q);
+    });
+    
+    $("#search-input")?.addEventListener("keypress", e => {
+      if (e.key === "Enter") {
+        const q = $("#search-input").value.trim();
+        if (q) window.location.href = "/?q=" + encodeURIComponent(q);
+      }
+    });
+    
+    $("#btn-logout")?.addEventListener("click", async () => {
+      await fetch(`${API}/logout`, { method: "POST" });
+      token = null;
+      localStorage.removeItem("token");
+      window.location.href = "/auth";
+    });
+  </script>
+</body>
+</html>

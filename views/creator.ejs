@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Creator Studio - PlaysTube v3.0.0</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-enter">
+  <!-- Navbar -->
+  <nav class="glass-nav">
+    <div class="navbar">
+      <a href="/" class="navbar-brand">
+        <div class="navbar-logo">
+          <i class="fas fa-play text-white text-xs"></i>
+        </div>
+        <span class="gradient-text">PlaysTube</span>
+      </a>
+      
+      <div class="flex items-center gap-4">
+        <a href="/" class="btn-icon" title="Início"><i class="fas fa-home"></i></a>
+        <button id="btn-logout" class="glass-button">Sair</button>
+        <div id="user-avatar" class="channel-avatar" style="width:36px;height:36px;">?</div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <h1 class="text-2xl font-bold mb-6" style="color:var(--text);"><i class="fas fa-video mr-2" style="color:var(--purple-light);"></i> Creator Studio</h1>
+    
+    <!-- Dashboard -->
+    <div id="dashboard" class="hidden">
+      <div class="grid grid-cols-3 gap-4 mb-8">
+        <div class="stat-card glass-card">
+          <div class="stat-value" id="stat-videos">0</div>
+          <div class="stat-label">Vídeos</div>
+        </div>
+        <div class="stat-card glass-card">
+          <div class="stat-value" id="stat-views">0</div>
+          <div class="stat-label">Visualizações</div>
+        </div>
+        <div class="stat-card glass-card">
+          <div class="stat-value" id="stat-comments">0</div>
+          <div class="stat-label">Comentários</div>
+        </div>
+      </div>
+      
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab active" data-tab="videos">
+          <i class="fas fa-video mr-1"></i> <span data-dynamic-text="possessive-plural">Meus</span> Vídeos
+        </button>
+        <button class="tab" data-tab="live">
+          <i class="fas fa-broadcast-tower mr-1"></i> Live
+        </button>
+        <button class="tab" data-tab="edit">
+          <i class="fas fa-edit mr-1"></i> Editar Canal
+        </button>
+      </div>
+      
+      <!-- Videos Tab -->
+      <div id="tab-videos">
+        <button id="btn-open-upload" class="glass-button primary mb-4">
+          <i class="fas fa-upload"></i> Enviar Vídeo
+        </button>
+        
+        <div class="glass-table">
+          <table class="w-full">
+            <thead>
+              <tr>
+                <th>Vídeo</th>
+                <th>Visualizações</th>
+                <th>Comentários</th>
+                <th>Data</th>
+                <th>Status</th>
+                <th style="text-align:right;">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="video-table-body"></tbody>
+          </table>
+          <div id="no-videos" class="empty-state hidden">
+            <i class="fas fa-video-slash"></i>
+            <p>Você ainda não enviou nenhum vídeo</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Live Tab -->
+      <div id="tab-live" class="hidden">
+        <div class="glass-card p-6 mb-6">
+          <h2 class="section-title"><i class="fas fa-broadcast-tower" style="color:var(--red);"></i> Transmissão Ao Vivo</h2>
+          
+          <!-- Create Live Form -->
+          <div id="live-create-form">
+            <div class="mb-4">
+              <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Título da Live</label>
+              <input type="text" id="live-title" placeholder="Título da sua transmissão" class="glass-input">
+            </div>
+            <div class="mb-4">
+              <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Descrição (opcional)</label>
+              <textarea id="live-desc" rows="2" placeholder="Descrição da transmissão" class="glass-input"></textarea>
+            </div>
+            <div class="mb-4">
+              <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Horário programado (opcional)</label>
+              <input type="datetime-local" id="live-scheduled" class="glass-input">
+            </div>
+            <div class="flex gap-3">
+              <button type="button" id="btn-live-now" class="glass-button primary flex-1" style="justify-content:center;">
+                <i class="fas fa-broadcast-tower"></i> Começar Agora
+              </button>
+              <button type="button" id="btn-live-schedule" class="glass-button flex-1" style="justify-content:center;">
+                <i class="fas fa-calendar"></i> Agendar
+              </button>
+            </div>
+          </div>
+          
+          <!-- Live Created (waiting/scheduled) -->
+          <div id="live-created" class="hidden">
+            <div id="live-status-banner" class="flex items-center gap-3 mb-4 glass p-4 rounded-lg">
+              <div id="live-status-dot" class="w-3 h-3 rounded-full" style="background:var(--purple);animation:pulse 1.5s ease-in-out infinite;"></div>
+              <div>
+                <span id="live-status-text" style="font-weight:500;color:var(--purple-light);">Live agendada</span>
+                <span id="live-delay-warning" class="hidden" style="display:block;font-size:.8rem;color:var(--yellow);margin-top:.25rem;">
+                  <i class="fas fa-exclamation-triangle"></i> A transmissão está atrasada!
+                </span>
+              </div>
+            </div>
+            
+            <div class="glass p-4 rounded-lg mb-4">
+              <div class="flex items-center justify-between mb-2">
+                <span style="font-size:.875rem;font-weight:500;color:var(--text-secondary);">Servidor RTMP</span>
+                <button class="glass-button" style="padding:.25rem .75rem;" onclick="copyToClipboard('rtmp://localhost/live')">
+                  <i class="fas fa-copy"></i> Copiar
+                </button>
+              </div>
+              <code style="font-size:.8rem;color:var(--text-muted);">rtmp://localhost/live</code>
+            </div>
+            
+            <div class="glass p-4 rounded-lg mb-4">
+              <div class="flex items-center justify-between mb-2">
+                <span style="font-size:.875rem;font-weight:500;color:var(--text-secondary);">Stream Key</span>
+                <button class="glass-button" style="padding:.25rem .75rem;color:var(--orange);" onclick="regenerateStreamKey()">
+                  <i class="fas fa-sync"></i> Gerar nova
+                </button>
+              </div>
+              <div class="flex items-center gap-2">
+                <code id="live-stream-key-display" class="glass" style="padding:.35rem .75rem;border-radius:8px;font-size:.8rem;flex:1;">Carregando...</code>
+                <button class="glass-button" style="padding:.25rem .75rem;" onclick="copyStreamKey()">
+                  <i class="fas fa-copy"></i>
+                </button>
+              </div>
+              <p style="font-size:.75rem;color:var(--red);margin-top:.5rem;">Nunca compartilhe sua stream key!</p>
+            </div>
+            
+            <p style="font-size:.875rem;color:var(--text-secondary);margin-bottom:1rem;">
+              <i class="fas fa-info-circle"></i> 
+              <span id="live-instruction-text">Conecte seu software de streaming (OBS, StreamYard) usando as informações acima.</span>
+            </p>
+            
+            <div class="flex gap-3">
+              <button type="button" id="btn-cancel-live" class="glass-button flex-1" style="justify-content:center;color:var(--red);">
+                <i class="fas fa-times"></i> Cancelar
+              </button>
+              <button type="button" id="btn-live-start-now" class="glass-button primary flex-1 hidden" style="justify-content:center;">
+                <i class="fas fa-broadcast-tower"></i> Começar Agora
+              </button>
+            </div>
+          </div>
+          
+          <!-- Live Active -->
+          <div id="live-active" class="hidden">
+            <div class="flex items-center gap-3 mb-4 glass" style="padding:1rem;border-radius:12px;border-color:rgba(239,68,68,0.2);">
+              <div style="width:12px;height:12px;border-radius:50%;background:var(--red);animation:livePulse 1.5s ease-in-out infinite;"></div>
+              <div>
+                <span style="font-weight:500;color:var(--red);">Transmissão ao vivo ativa</span>
+                <span style="display:block;font-size:.8rem;color:var(--text-muted);margin-top:.15rem;"><i class="fas fa-eye"></i> <span id="live-viewer-count">0</span> espectadores</span>
+              </div>
+            </div>
+            <p style="color:var(--text-secondary);font-size:.875rem;margin-bottom:.5rem;">Sua transmissão está sendo exibida para seus espectadores.</p>
+            <button type="button" id="btn-end-live" class="glass-button" style="color:var(--red);">
+              <i class="fas fa-stop"></i> Encerrar Transmissão
+            </button>
+          </div>
+          
+          <!-- Live Cancelled -->
+          <div id="live-cancelled" class="hidden">
+            <div class="flex items-center gap-3 mb-4 glass" style="padding:1rem;border-radius:12px;border-color:rgba(239,68,68,0.15);">
+              <i class="fas fa-times-circle" style="color:var(--red);font-size:1.25rem;"></i>
+              <div>
+                <span style="font-weight:500;color:var(--red);">Transmissão cancelada</span>
+                <span style="display:block;font-size:.8rem;color:var(--text-muted);margin-top:.15rem;">Esta live foi cancelada. Crie uma nova para fazer outra transmissão.</span>
+              </div>
+            </div>
+            <button type="button" id="btn-new-live" class="glass-button primary">
+              <i class="fas fa-plus"></i> Nova Transmissão
+            </button>
+          </div>
+        </div>
+        
+        <div class="glass" style="border-radius:12px;padding:1rem;border-color:rgba(34,197,94,0.15);">
+          <div class="flex items-start gap-3">
+            <i class="fas fa-check-circle" style="color:var(--green);margin-top:.25rem;"></i>
+            <div>
+              <p style="font-weight:500;color:var(--green);">Servidor RTMP integrado</p>
+              <p style="font-size:.875rem;margin-top:.25rem;opacity:.7;">Use as configurações abaixo no seu software de streaming (OBS, StreamYard, etc):</p>
+              <ul style="font-size:.875rem;margin-top:.5rem;opacity:.7;">
+                <li><strong>Servidor:</strong> rtmp://localhost/live</li>
+                <li><strong>Stream Key:</strong> Use a chave gerada (não inclua /live)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Edit Channel Tab -->
+      <div id="tab-edit" class="hidden">
+        <form id="channel-edit-form" class="max-w-2xl">
+          <div class="glass-card p-6 mb-6">
+            <h2 class="section-title"><i class="fas fa-info-circle" style="color:var(--purple-light);"></i> Informações do Canal</h2>
+            
+            <div class="mb-4">
+              <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Nome</label>
+              <input type="text" id="channel-name" class="glass-input">
+            </div>
+            
+            <div class="mb-4">
+              <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Descrição</label>
+              <textarea id="channel-desc" rows="3" class="glass-input"></textarea>
+            </div>
+            
+            <div class="mb-4">
+              <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Pronomes</label>
+              <select id="channel-pronouns" class="glass-input">
+                <option value="">Selecione seus pronomes</option>
+                <option value="ele/dele">Ele/Dele</option>
+                <option value="ela/dela">Ela/Dela</option>
+                <option value="não especificado">Não especificado</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="glass-card p-6 mb-6">
+            <h2 class="section-title"><i class="fas fa-image" style="color:var(--purple);"></i> Banner do Canal</h2>
+            <div id="banner-preview" class="w-full h-32 rounded-lg flex flex-col items-center justify-center overflow-hidden cursor-pointer transition-all hover:opacity-80" style="background:var(--surface);border-radius:12px;cursor:pointer;" onclick="document.getElementById('channel-banner-input').click()">
+              <span style="color:var(--text-muted);font-size:.875rem;">Clique para alterar banner</span>
+              <span id="banner-filename" class="hidden" style="color:var(--text-muted);font-size:.75rem;margin-top:.25rem;"></span>
+              <div id="banner-status" class="hidden" style="position:absolute;bottom:.25rem;right:.5rem;font-size:.75rem;color:var(--green);">Salvo</div>
+            </div>
+            <input type="file" id="channel-banner-input" accept="image/*" class="hidden">
+          </div>
+          
+          <div class="glass-card p-6 mb-6">
+            <h2 class="section-title"><i class="fas fa-user-circle" style="color:var(--pink);"></i> Avatar do Canal</h2>
+            <div id="avatar-preview" class="w-24 h-24 rounded-full flex flex-col items-center justify-center overflow-hidden mx-auto cursor-pointer transition-all hover:opacity-80" style="background:var(--surface);cursor:pointer;" onclick="document.getElementById('channel-avatar-input').click()">
+              <span class="text-2xl font-bold" id="avatar-initial" style="color:var(--text-muted);">?</span>
+              <span id="avatar-filename" class="hidden" style="color:var(--text-muted);font-size:.75rem;margin-top:.25rem;"></span>
+              <div id="avatar-status" class="hidden" style="position:absolute;bottom:0;right:0;width:12px;height:12px;background:var(--green);border-radius:50%;"></div>
+            </div>
+            <input type="file" id="channel-avatar-input" accept="image/*" class="hidden">
+            <p style="text-align:center;font-size:.75rem;color:var(--text-muted);margin-top:.5rem;">Clique para alterar</p>
+          </div>
+          
+          <button type="submit" class="glass-button w-full" style="justify-content:center;">
+            <i class="fas fa-save"></i> Salvar Alterações
+          </button>
+        </form>
+      </div>
+    </div>
+    
+    <!-- Create Channel -->
+    <div id="create-channel" class="hidden">
+      <div class="glass-card p-8 max-w-2xl mx-auto">
+        <h2 class="text-2xl font-bold text-center mb-6">Criar <span data-dynamic-text="possessive"></span> Canal</h2>
+        
+        <form id="channel-create-form">
+          <div class="mb-4">
+            <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Nome do Canal</label>
+            <input type="text" id="new-channel-name" required class="glass-input" placeholder="Meu Canal">
+          </div>
+          
+          <div class="mb-6">
+            <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Descrição (opcional)</label>
+            <textarea id="new-channel-desc" rows="3" class="glass-input" placeholder="Sobre o canal..."></textarea>
+          </div>
+          
+          <button type="submit" class="glass-button w-full" style="justify-content:center;">
+            <i class="fas fa-plus"></i> Criar Canal
+          </button>
+        </form>
+      </div>
+      <div class="mb-4 glass p-4 rounded-lg" id="render-status" style="display:none;">
+        <div class="flex items-center gap-2 mb-2">
+          <i class="fas fa-exclamation-triangle" style="color:var(--yellow);"></i>
+          <span class="font-medium" id="render-status-title" style="color:var(--yellow);">Processando vídeo</span>
+        </div>
+        <p class="text-sm" style="color:var(--text-secondary);margin-bottom:.5rem;" id="render-status-msg">Seu vídeo está sendo processado...</p>
+        <div class="flex gap-2 items-center">
+          <div class="progress-track flex-1">
+            <div id="render-bar" class="progress-fill transition-all" style="width: 0%"></div>
+          </div>
+          <span id="render-percent" class="text-sm" style="color:var(--yellow);">0%</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Edit Video Modal -->
+  <div id="edit-video-modal" class="modal-overlay hidden">
+    <div class="glass-modal w-full max-w-lg">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold">Editar Vídeo</h2>
+        <button id="edit-modal-close" class="text-2xl transition-colors" style="color:var(--text-muted);">&times;</button>
+      </div>
+      <form id="video-edit-form">
+        <input type="hidden" id="edit-video-id">
+        <div class="mb-4">
+          <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Título</label>
+          <input type="text" id="edit-video-title" class="glass-input">
+        </div>
+        <div class="mb-4">
+          <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Descrição</label>
+          <textarea id="edit-video-desc" rows="4" class="glass-input"></textarea>
+        </div>
+        <button type="submit" class="glass-button w-full" style="justify-content:center;">
+          <i class="fas fa-save"></i> Salvar
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Upload Modal -->
+  <div id="upload-modal" class="modal-overlay hidden">
+    <div class="glass-modal w-full max-w-lg">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold">Enviar Vídeo</h2>
+        <button id="modal-close" class="text-2xl transition-colors" style="color:var(--text-muted);">&times;</button>
+      </div>
+      
+      <div id="drop-zone" class="dropzone mb-4">
+        <div id="file-selected" class="hidden">
+          <i class="fas fa-file-video" style="font-size:2.5rem;color:var(--green);margin-bottom:.5rem;"></i>
+          <p class="font-medium" id="file-name"></p>
+          <p style="color:var(--text-muted);font-size:.875rem;" id="file-size"></p>
+          <button type="button" onclick="document.getElementById('video-file').click()" class="glass-button" style="margin-top:.5rem;">Trocar arquivo</button>
+        </div>
+        <div id="file-empty">
+          <i class="fas fa-cloud-upload-alt" style="font-size:2.5rem;color:var(--text-muted);margin-bottom:1rem;"></i>
+          <p style="color:var(--text-muted);margin-bottom:.5rem;">Arraste o vídeo aqui ou</p>
+          <label class="glass-button cursor-pointer">Selecionar
+            <input type="file" id="video-file" accept="video/*" class="hidden">
+          </label>
+        </div>
+      </div>
+      
+      <div class="mb-4">
+        <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Título do Vídeo</label>
+        <input type="text" id="video-title" placeholder="Título do seu vídeo" class="glass-input">
+      </div>
+      
+      <div class="mb-4">
+        <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Descrição</label>
+        <textarea id="video-desc" rows="3" placeholder="Descrição do vídeo (opcional)" class="glass-input"></textarea>
+      </div>
+      
+      <div class="mb-4">
+        <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Tags (separadas por vírgula)</label>
+        <input type="text" id="video-tags" placeholder="tech, tutorial" class="glass-input">
+      </div>
+      
+      <div id="upload-progress" class="hidden glass p-4 rounded-xl mb-4">
+        <div class="flex justify-between text-sm mb-2">
+          <span id="progress-label" style="color:var(--text-secondary);">Enviando...</span>
+          <span id="progress-percent" class="font-medium" style="color:var(--purple-light);">0%</span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-fill transition-all" style="width: 0%;"></div>
+        </div>
+      </div>
+      
+      <button id="btn-upload" class="glass-button w-full" style="justify-content:center;" disabled>
+        <i class="fas fa-upload"></i> Enviar
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const API = "http://localhost:4000/api";
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(?:^| )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let token = getCookie('token');
+    if (!token) token = localStorage.getItem('token');
+    let currentUser = null;
+    let currentChannel = null;
+    let selectedFile = null;
+    
+    async function init() {
+      console.log('Initializing creator page...');
+      token = document.cookie.split('token=')[1]?.split(';')[0];
+      if (!token) token = localStorage.getItem('token');
+      if (!token) { 
+        window.location.href = '/auth'; 
+        return; 
+      }
+      
+      try {
+        const resp = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!resp.ok) { window.location.href = '/auth'; return; }
+        currentUser = await resp.json();
+        
+        if (currentUser.avatar_url) {
+          document.getElementById('user-avatar').innerHTML = `<img src="${currentUser.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+        } else {
+          document.getElementById('user-avatar').textContent = currentUser.name.charAt(0).toUpperCase();
+        }
+        
+        applyUserTheme(currentUser.pronouns);
+        
+        const channelResp = await fetch(`${API}/channels`, { headers: { Authorization: `Bearer ${token}` } });
+        const channels = await channelResp.json();
+        
+        if (channels.length > 0) {
+          currentChannel = channels[0];
+          document.getElementById('dashboard').classList.remove('hidden');
+          loadDashboard();
+          setupChannelEventListeners();
+          checkActiveLive();
+        } else {
+          document.getElementById('create-channel').classList.remove('hidden');
+          setupCreateChannelListeners();
+        }
+      } catch (e) {
+        console.error('Init error:', e);
+        window.location.href = '/auth';
+      }
+    }
+    
+    function setupCreateChannelListeners() {
+      document.getElementById('channel-create-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const name = document.getElementById('new-channel-name').value.trim();
+        const description = document.getElementById('new-channel-desc').value.trim();
+        
+        const resp = await fetch(`${API}/channels`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name, description })
+        });
+        
+        const data = await resp.json();
+        if (data.id) location.reload();
+        else alert(data.error || 'Erro ao criar canal');
+      });
+    }
+    
+    async function loadDashboard() {
+      const videosResp = await fetch(`${API}/creator/videos`, { headers: { Authorization: `Bearer ${token}` } });
+      const videos = await videosResp.json();
+      
+      const tbody = document.getElementById('video-table-body');
+      if (videos.length === 0) {
+        document.getElementById('no-videos').classList.remove('hidden');
+      } else {
+        tbody.innerHTML = videos.map(v => `
+          <tr>
+            <td>
+              <a href="/video/${v.id}" style="display:flex;align-items:center;gap:.75rem;">
+                <img src="/static/${v.id}/thumbnail.jpg" style="width:96px;height:56px;object-fit:cover;border-radius:8px;">
+                <div>
+                  <span style="font-weight:500;color:var(--text);display:block;">${v.title}</span>
+                  <span style="font-size:.75rem;color:var(--text-muted);">${v.description ? v.description.substring(0, 50) + '...' : ''}</span>
+                </div>
+              </a>
+            </td>
+            <td>${v.views}</td>
+            <td>${v.comment_count}</td>
+            <td>${new Date(v.created_at).toLocaleDateString('pt-BR')}</td>
+            <td>
+              ${
+                v.renderStatus === 'processing'
+                  ? '<span class="glass-badge" style="border-color:rgba(234,179,8,0.2);color:#fbbf24;"><i class="fas fa-spinner fa-spin"></i> Processando</span>'
+                  : v.renderStatus === 'pending'
+                  ? '<span class="glass-badge" style="border-color:rgba(234,179,8,0.2);color:#fbbf24;"><i class="fas fa-hourglass-half"></i> Aguardando</span>'
+                  : '<span class="glass-badge" style="border-color:rgba(34,197,94,0.2);color:#4ade80;"><i class="fas fa-check"></i> Completo</span>'
+              }
+            </td>
+            <td style="text-align:right;">
+              <button class="btn-icon" style="display:inline-flex;" onclick="editVideo('${v.id}', '${v.title.replace(/'/g, "\\'")}', '${(v.description || '').replace(/'/g, "\\'")}')">
+                <i class="fas fa-edit"></i>
+              </button>
+              <button class="btn-icon" style="display:inline-flex;color:var(--red);" onclick="deleteVideo('${v.id}')">
+                <i class="fas fa-trash"></i>
+              </button>
+            </td>
+          </tr>
+        `).join('');
+      }
+      
+      const statsResp = await fetch(`${API}/creator/stats`, { headers: { Authorization: `Bearer ${token}` } });
+      const stats = await statsResp.json();
+      document.getElementById('stat-videos').textContent = stats.total_videos;
+      document.getElementById('stat-views').textContent = stats.total_views.toLocaleString();
+      document.getElementById('stat-comments').textContent = stats.total_comments;
+      
+      document.getElementById('channel-name').value = currentChannel.name;
+      document.getElementById('channel-desc').value = currentChannel.description || '';
+      const pronouns = currentChannel.pronouns || '';
+      document.getElementById('channel-pronouns').querySelectorAll('option').forEach(opt => {
+        if (opt.value === pronouns) opt.selected = true;
+      });
+      
+      if (currentChannel.banner_url) {
+        document.getElementById('banner-preview').innerHTML = `<img src="${currentChannel.banner_url}" style="width:100%;height:100%;object-fit:cover;">`;
+      }
+      
+      if (currentChannel.avatar_url) {
+        const avatarPreview = document.getElementById('avatar-preview');
+        const avatarInitial = document.getElementById('avatar-initial');
+        if (avatarPreview) {
+          avatarPreview.innerHTML = `<img src="${currentChannel.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+        }
+        if (avatarInitial) avatarInitial.style.display = 'none';
+      } else {
+        const avatarInitial = document.getElementById('avatar-initial');
+        if (avatarInitial) avatarInitial.textContent = currentChannel.name.charAt(0).toUpperCase();
+      }
+    }
+    
+    function setupChannelEventListeners() {
+      console.log('Setting up channel event listeners...');
+      
+      document.querySelectorAll('.tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          
+          document.getElementById('tab-videos').classList.add('hidden');
+          document.getElementById('tab-edit').classList.add('hidden');
+          document.getElementById('tab-live').classList.add('hidden');
+          document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+        });
+      });
+      
+      document.getElementById('channel-edit-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        console.log('Saving channel...');
+        const name = document.getElementById('channel-name').value.trim();
+        const description = document.getElementById('channel-desc').value.trim();
+        const pronouns = document.getElementById('channel-pronouns').value;
+        
+        const resp = await fetch(`${API}/channels/${currentChannel.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name, description, pronouns })
+        });
+        
+        if (resp.ok) {
+          applyUserTheme(pronouns);
+          alert('Canal atualizado!');
+          location.reload();
+        } else {
+          alert('Erro ao atualizar canal');
+        }
+      });
+      
+      const bannerPreview = document.getElementById('banner-preview');
+      if (bannerPreview) {
+        bannerPreview.addEventListener('click', () => {
+          console.log('Banner preview clicked');
+          document.getElementById('channel-banner-input').click();
+        });
+      }
+      
+      document.getElementById('channel-banner-input').addEventListener('change', async e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        token = document.cookie.split('token=')[1]?.split(';')[0] || localStorage.getItem('token');
+        
+        const filenameEl = document.getElementById('banner-filename');
+        if (filenameEl) {
+          filenameEl.textContent = 'Selecionado: ' + file.name;
+          filenameEl.classList.remove('hidden');
+        }
+        
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+          const preview = document.getElementById('banner-preview');
+          if (preview) {
+            preview.innerHTML = `<img src="${evt.target.result}" style="width:100%;height:100%;object-fit:cover;">`;
+          }
+        };
+        reader.readAsDataURL(file);
+        
+        const formData = new FormData();
+        formData.append('banner', file);
+        
+        const resp = await fetch(`${API}/channels/${currentChannel.id}/banner`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData
+        });
+        
+        if (resp.ok) {
+          const statusEl = document.getElementById('banner-status');
+          if (statusEl) statusEl.classList.remove('hidden');
+          setTimeout(() => location.reload(), 1000);
+        } else {
+          alert('Erro ao enviar banner');
+        }
+      });
+      
+      const avatarPreview = document.getElementById('avatar-preview');
+      if (avatarPreview) {
+        avatarPreview.addEventListener('click', () => {
+          console.log('Avatar preview clicked');
+          document.getElementById('channel-avatar-input').click();
+        });
+      }
+      
+      document.getElementById('channel-avatar-input').addEventListener('change', async e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        token = document.cookie.split('token=')[1]?.split(';')[0] || localStorage.getItem('token');
+        
+        const filenameEl = document.getElementById('avatar-filename');
+        if (filenameEl) {
+          filenameEl.textContent = 'Selecionado: ' + file.name;
+          filenameEl.classList.remove('hidden');
+        }
+        
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+          const preview = document.getElementById('avatar-preview');
+          if (preview) {
+            preview.innerHTML = `<img src="${evt.target.result}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+          }
+        };
+        reader.readAsDataURL(file);
+        
+        const formData = new FormData();
+        formData.append('avatar', file);
+        
+        const resp = await fetch(`${API}/channels/${currentChannel.id}/avatar`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData
+        });
+        
+        if (resp.ok) {
+          const statusEl = document.getElementById('avatar-status');
+          if (statusEl) statusEl.classList.remove('hidden');
+          setTimeout(() => location.reload(), 1000);
+        } else {
+          alert('Erro ao enviar avatar');
+        }
+      });
+      
+      document.getElementById('btn-open-upload').addEventListener('click', () => {
+        document.getElementById('upload-modal').classList.remove('hidden');
+      });
+      
+      document.getElementById('modal-close').addEventListener('click', () => {
+        document.getElementById('upload-modal').classList.add('hidden');
+      });
+      
+      document.getElementById('video-file').addEventListener('change', e => {
+        console.log('Video file selected:', e.target.files[0]?.name);
+        selectedFile = e.target.files[0];
+        if (selectedFile) {
+          document.getElementById('btn-upload').disabled = false;
+          document.getElementById('file-empty').classList.add('hidden');
+          document.getElementById('file-selected').classList.remove('hidden');
+          document.getElementById('file-name').textContent = selectedFile.name;
+          document.getElementById('file-size').textContent = (selectedFile.size / 1024 / 1024).toFixed(2) + ' MB';
+        }
+      });
+      
+      document.getElementById('btn-upload').addEventListener('click', async () => {
+        if (!selectedFile) return;
+        console.log('Uploading video:', selectedFile.name);
+        
+        const formData = new FormData();
+        formData.append('video', selectedFile);
+        formData.append('channelId', currentChannel.id);
+        formData.append('title', document.getElementById('video-title').value);
+        formData.append('description', document.getElementById('video-desc').value);
+        formData.append('tags', document.getElementById('video-tags').value);
+        
+        document.getElementById('upload-progress').classList.remove('hidden');
+        document.getElementById('progress-percent').textContent = '0%';
+        document.getElementById('progress-bar').style.width = '0%';
+        
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/videos`);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        
+        document.getElementById('progress-label').textContent = 'Enviando...';
+        
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 90);
+            document.getElementById('progress-percent').textContent = pct + '%';
+            document.getElementById('progress-bar').style.width = pct + '%';
+          }
+        };
+        
+        xhr.onload = async () => {
+          if (xhr.status === 200) {
+            document.getElementById('progress-percent').textContent = '100%';
+            document.getElementById('progress-bar').style.width = '100%';
+            document.getElementById('progress-label').textContent = 'Upload completo!';
+            
+            setTimeout(() => {
+              document.getElementById('upload-modal').classList.add('hidden');
+              document.getElementById('upload-progress').classList.add('hidden');
+              location.reload();
+            }, 1000);
+          } else {
+            alert('Erro ao enviar vídeo');
+          }
+        };
+        
+        xhr.send(formData);
+      });
+      
+      document.getElementById('btn-logout').addEventListener('click', async () => {
+        await fetch(`${API}/logout`, { method: "POST" });
+        window.location.href = '/auth';
+      });
+    }
+    
+    window.deleteVideo = async id => {
+      if (!confirm('Tem certeza que deseja excluir este vídeo?')) return;
+      
+      await fetch(`${API}/videos/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      location.reload();
+    };
+    
+    window.editVideo = (id, title, description) => {
+      document.getElementById('edit-video-id').value = id;
+      document.getElementById('edit-video-title').value = title;
+      document.getElementById('edit-video-desc').value = description || '';
+      document.getElementById('edit-video-modal').classList.remove('hidden');
+    };
+    
+    document.getElementById('edit-modal-close')?.addEventListener('click', () => {
+      document.getElementById('edit-video-modal').classList.add('hidden');
+    });
+    
+    document.getElementById('edit-video-modal')?.addEventListener('click', (e) => {
+      if (e.target === document.getElementById('edit-video-modal')) {
+        document.getElementById('edit-video-modal').classList.add('hidden');
+      }
+    });
+    
+    document.getElementById('video-edit-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const id = document.getElementById('edit-video-id').value;
+      const title = document.getElementById('edit-video-title').value.trim();
+      const description = document.getElementById('edit-video-desc').value.trim();
+      
+      const resp = await fetch(`${API}/videos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ title, description })
+      });
+      
+      if (resp.ok) {
+        alert('Vídeo atualizado!');
+        document.getElementById('edit-video-modal').classList.add('hidden');
+        location.reload();
+      } else {
+        alert('Erro ao atualizar');
+      }
+    });
+    
+    let currentLiveId = null;
+    let livePollInterval = null;
+
+    async function checkActiveLive() {
+      if (!currentChannel) return;
+      try {
+        const resp = await fetch(`${API}/channels/${currentChannel.id}/live`);
+        const live = await resp.json();
+        if (live && live.id) {
+          currentLiveId = live.id;
+          showLiveState(live.status, live);
+          if (live.status !== 'live') startLiveStatusPoll();
+        } else {
+          showLiveState('idle');
+        }
+        loadStreamKey();
+      } catch (e) {
+        showLiveState('idle');
+      }
+    }
+
+    function showLiveState(status, live) {
+      const createForm = document.getElementById('live-create-form');
+      const created = document.getElementById('live-created');
+      const active = document.getElementById('live-active');
+      const cancelled = document.getElementById('live-cancelled');
+      const statusBanner = document.getElementById('live-status-banner');
+      const statusDot = document.getElementById('live-status-dot');
+      const statusText = document.getElementById('live-status-text');
+      const delayWarning = document.getElementById('live-delay-warning');
+      const instrText = document.getElementById('live-instruction-text');
+      const btnStartNow = document.getElementById('btn-live-start-now');
+
+      [createForm, created, active, cancelled].forEach(el => el?.classList.add('hidden'));
+
+      switch (status) {
+        case 'idle':
+          createForm?.classList.remove('hidden');
+          break;
+
+        case 'scheduled':
+          created?.classList.remove('hidden');
+          statusDot.style.background = 'var(--purple)';
+          statusDot.style.animation = 'pulse 1.5s ease-in-out infinite';
+          statusText.textContent = 'Live agendada para ' + new Date(live.scheduled_at).toLocaleString('pt-BR');
+          statusText.style.color = 'var(--purple-light)';
+          delayWarning?.classList.add('hidden');
+          instrText.textContent = 'Conecte seu software de streaming (OBS, StreamYard) na hora programada usando as informações abaixo.';
+          btnStartNow?.classList.remove('hidden');
+          break;
+
+        case 'ready': {
+          created?.classList.remove('hidden');
+          statusDot.style.background = 'var(--purple)';
+          statusDot.style.animation = 'pulse 1.5s ease-in-out infinite';
+          const conectadoSuffix = { 'ele/dele': 'o', 'ela/dela': 'a', 'não especificado': 'e' }[currentChannel?.pronouns] || 'o';
+          statusText.textContent = 'Conectad' + conectadoSuffix + ' — aguardando horário agendado!';
+          statusText.style.color = 'var(--purple-light)';
+          delayWarning?.classList.add('hidden');
+          instrText.textContent = 'Seu software de streaming está conectado. A transmissão ficará disponível para os espectadores no horário agendado.';
+          btnStartNow?.classList.add('hidden');
+          break;
+        }
+
+        case 'waiting':
+          created?.classList.remove('hidden');
+          statusDot.style.background = 'var(--purple)';
+          statusDot.style.animation = 'pulse 1.5s ease-in-out infinite';
+          statusText.textContent = 'Aguardando transmissão...';
+          statusText.style.color = 'var(--text-secondary)';
+          delayWarning?.classList.add('hidden');
+          instrText.textContent = 'Conecte seu software de streaming (OBS, StreamYard) usando as informações abaixo para começar.';
+          btnStartNow?.classList.add('hidden');
+          break;
+
+        case 'delayed':
+          created?.classList.remove('hidden');
+          statusDot.style.background = 'var(--yellow)';
+          statusDot.style.animation = 'pulse 0.8s ease-in-out infinite';
+          statusText.textContent = 'Transmissão atrasada!';
+          statusText.style.color = 'var(--yellow)';
+          delayWarning?.classList.remove('hidden');
+          instrText.textContent = 'Sua transmissão está atrasada. Conecte o mais rápido possível!';
+          btnStartNow?.classList.add('hidden');
+          break;
+
+        case 'live':
+          active?.classList.remove('hidden');
+          startLiveViewerPoll();
+          break;
+
+        case 'cancelled':
+          cancelled?.classList.remove('hidden');
+          break;
+      }
+    }
+
+    function startLiveViewerPoll() {
+      if (livePollInterval) clearInterval(livePollInterval);
+      async function poll() {
+        try {
+          const resp = await fetch(`${API}/channels/${currentChannel.id}/live`);
+          const live = await resp.json();
+          if (live && live.status === 'live') {
+            const vResp = await fetch(`${API}/live/${live.id}/viewers`);
+            const vData = await vResp.json();
+            document.getElementById('live-viewer-count').textContent = vData.count || 0;
+          } else {
+            // Live ended or changed
+            clearInterval(livePollInterval);
+            livePollInterval = null;
+            checkActiveLive();
+          }
+        } catch(e) {}
+      }
+      poll();
+      livePollInterval = setInterval(poll, 10000);
+    }
+
+    // Poll for status changes when in waiting/scheduled/delayed
+    function startLiveStatusPoll() {
+      if (livePollInterval) clearInterval(livePollInterval);
+      livePollInterval = setInterval(async () => {
+        if (!currentChannel || !currentLiveId) return;
+        try {
+          const resp = await fetch(`${API}/live/${currentChannel.id}/status`);
+          const data = await resp.json();
+          if (data.status === 'live' || data.status === 'cancelled') {
+            clearInterval(livePollInterval);
+            livePollInterval = null;
+            checkActiveLive();
+          } else if (data.status === 'delayed') {
+            showLiveState('delayed', data);
+          } else if (data.status === 'ready') {
+            showLiveState('ready', data);
+          }
+        } catch(e) {}
+      }, 10000);
+    }
+
+    checkActiveLive();
+
+    async function loadStreamKey() {
+      if (!currentChannel) return;
+      try {
+        const resp = await fetch(`${API}/channels/${currentChannel.id}/stream-key`, { headers: { Authorization: `Bearer ${token}` } });
+        const data = await resp.json();
+        document.getElementById('live-stream-key-display').textContent = data.streamKey || 'Não disponível';
+      } catch (e) {
+        document.getElementById('live-stream-key-display').textContent = 'Erro ao carregar';
+      }
+    }
+
+    window.copyToClipboard = (text) => navigator.clipboard.writeText(text);
+    window.copyStreamKey = () => navigator.clipboard.writeText(document.getElementById('live-stream-key-display').textContent);
+
+    window.regenerateStreamKey = async () => {
+      if (!confirm('Tem certeza? Isso vai invalidar a chave atual e qualquer transmissão ativa será encerrada.')) return;
+      try {
+        const resp = await fetch(`${API}/channels/${currentChannel.id}/stream-key`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+        const data = await resp.json();
+        document.getElementById('live-stream-key-display').textContent = data.streamKey;
+      } catch (e) { alert('Erro ao gerar nova chave'); }
+    };
+
+    function createLive(mode) {
+      return async () => {
+        const title = document.getElementById('live-title').value.trim();
+        const description = document.getElementById('live-desc').value.trim();
+        if (!title) { alert('Título obrigatório'); return; }
+        let scheduledAt = null;
+        if (mode === 'schedule') {
+          scheduledAt = document.getElementById('live-scheduled').value;
+          if (!scheduledAt) { alert('Selecione um horário para agendar'); return; }
+        }
+        try {
+          const resp = await fetch(`${API}/live`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ channelId: currentChannel.id, title, description, mode, scheduledAt })
+          });
+          const data = await resp.json();
+          if (data.liveId) {
+        currentLiveId = data.liveId;
+        document.getElementById('live-stream-key-display').textContent = data.streamKey;
+        showLiveState(data.status, { ...data, scheduled_at: data.scheduledAt, title, description });
+        startLiveStatusPoll();
+          } else {
+            alert(data.error || 'Erro ao criar live');
+          }
+        } catch (e) { alert('Erro ao criar live'); }
+      };
+    }
+
+    document.getElementById('btn-live-now')?.addEventListener('click', createLive('now'));
+    document.getElementById('btn-live-schedule')?.addEventListener('click', createLive('schedule'));
+    document.getElementById('btn-live-start-now')?.addEventListener('click', createLive('now'));
+
+    document.getElementById('btn-end-live')?.addEventListener('click', async () => {
+      if (!confirm('Encerrar a transmissão ao vivo?')) return;
+      try {
+        const resp = await fetch(`${API}/channels/${currentChannel.id}/live`);
+        const live = await resp.json();
+        if (live && live.id) {
+          await fetch(`${API}/live/${live.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+        }
+        if (livePollInterval) { clearInterval(livePollInterval); livePollInterval = null; }
+        showLiveState('idle');
+      } catch (e) { console.error(e); alert('Erro ao encerrar live'); }
+    });
+
+    document.getElementById('btn-cancel-live')?.addEventListener('click', async () => {
+      if (!confirm('Cancelar esta transmissão?')) return;
+      if (!currentLiveId) return;
+      try {
+        await fetch(`${API}/live/${currentLiveId}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+        if (livePollInterval) { clearInterval(livePollInterval); livePollInterval = null; }
+        showLiveState('cancelled');
+      } catch (e) { alert('Erro ao cancelar'); }
+    });
+
+    document.getElementById('btn-new-live')?.addEventListener('click', () => {
+      currentLiveId = null;
+      showLiveState('idle');
+    });
+    
+    function updateDynamicText() {
+      const saved = localStorage.getItem('userPronouns');
+      if (!saved) return;
+      try {
+        const p = JSON.parse(saved);
+        document.querySelectorAll('[data-dynamic-text]').forEach(el => {
+          const key = el.dataset.dynamicText;
+          if (key === 'possessive') el.textContent = p.possessive;
+          else if (key === 'article') el.textContent = p.article;
+          else if (key === 'possessive-plural') el.textContent = p.possessive + 's';
+          else if (key === 'user-no-channels') {
+            if (p.article === 'a') el.textContent = 'Esta usuária não possui canais';
+            else if (p.article === '') el.textContent = 'Esta pessoa não possui canais';
+            else el.textContent = 'Este usuário não possui canais';
+          }
+        });
+      } catch (e) {}
+    }
+    
+function applyUserTheme(pronouns) {
+      if (!pronouns || pronouns === 'não especificado') return;
+      const colors = {
+        'ele/dele': { bg: '#1e3a5f', accent: '#3b82f6', suffix: 'o', article: 'o', possessive: 'seu' },
+        'ela/dela': { bg: '#5f1e3a', accent: '#ec4899', suffix: 'a', article: 'a', possessive: 'sua' },
+        'não especificado': { bg: '#1e3a5f', accent: '#3b82f6', suffix: 'e', article: '', possessive: 'seu' }
+      };
+      const theme = colors[pronouns];
+      if (!theme) return;
+      const styles = document.createElement('style');
+      styles.textContent = `
+        .theme-bg { background-color: ${theme.bg} !important; }
+        .theme-accent { color: ${theme.accent} !important; }
+        .navbar-logo, .channel-avatar { background-color: ${theme.bg} !important; }
+      `;
+      document.head.appendChild(styles);
+      localStorage.setItem('userTheme', JSON.stringify(theme));
+      localStorage.setItem('userPronouns', JSON.stringify({ suffix: theme.suffix, article: theme.article, possessive: theme.possessive }));
+      updateDynamicText();
+    }
+    
+    init();
+  </script>
+</body>
+</html>

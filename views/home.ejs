@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= typeof searchQuery !== 'undefined' && searchQuery ? 'Buscar: ' + searchQuery : 'Início' %> - PlaysTube v3.0.0</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-enter">
+  <!-- Navbar -->
+  <nav class="glass-nav">
+    <div class="navbar">
+      <a href="/" class="navbar-brand">
+        <div class="navbar-logo">
+          <i class="fas fa-play text-white text-xs"></i>
+        </div>
+        <span class="gradient-text">PlaysTube</span>
+      </a>
+      
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Buscar vídeos..."
+          value="<%= typeof searchQuery !== 'undefined' ? searchQuery : '' %>">
+        <button id="btn-search"><i class="fas fa-search"></i></button>
+      </div>
+      
+      <div class="flex items-center gap-4" id="user-menu">
+        <a href="/auth" class="glass-button">Entrar</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <h1 class="section-title">
+      <% if (typeof searchQuery !== 'undefined' && searchQuery) { %>
+        <i class="fas fa-search"></i> Resultados para "<%= searchQuery %>"
+      <% } else { %>
+        <i class="fas fa-fire"></i> Vídeos em Alta
+      <% } %>
+    </h1>
+    
+    <div class="video-grid">
+      <% if (typeof videos !== 'undefined' && videos.length > 0) { %>
+        <% videos.forEach(function(v) { %>
+          <% if (v.type === 'live') { %>
+          <a href="/live/<%= v.channelId %>" class="video-card">
+            <div class="video-card-thumb">
+              <div class="absolute inset-0 flex items-center justify-center">
+                <div class="w-16 h-16 bg-red-600/80 rounded-full flex items-center justify-center float-y">
+                  <i class="fas fa-broadcast-tower text-2xl text-white"></i>
+                </div>
+              </div>
+              <% if (v.status === 'live') { %>
+              <span class="live-badge absolute top-2 left-2">AO VIVO</span>
+              <% } else { %>
+              <span class="glass-badge absolute top-2 left-2" style="border-color:rgba(139,92,246,0.2);color:var(--purple-light);">EM BREVE</span>
+              <% } %>
+            </div>
+            <div class="video-card-body">
+              <h3 class="video-card-title"><%= v.title %></h3>
+              <p class="video-card-meta"><%= v.channel %></p>
+            </div>
+          </a>
+          <% } else { %>
+          <a href="/video/<%= v.id %>" class="video-card">
+            <div class="video-card-thumb">
+              <img src="<%= v.thumbnailUrl || '/static/' + v.id + '/thumbnail.jpg' %>" alt="<%= v.title %>">
+              <div class="absolute bottom-2 right-2 glass-badge"><%= v.views %> visualizações</div>
+            </div>
+            <div class="video-card-body">
+              <h3 class="video-card-title"><%= v.title %></h3>
+              <p class="video-card-meta"><%= v.channel %></p>
+            </div>
+          </a>
+          <% } %>
+        <% }); %>
+      <% } %>
+    </div>
+    
+    <% if (typeof videos !== 'undefined' && videos.length === 0) { %>
+      <div class="empty-state">
+        <i class="fas fa-video-slash"></i>
+        <p>Nenhum vídeo encontrado</p>
+        <% if (typeof searchQuery !== 'undefined' && searchQuery) { %>
+          <a href="/" class="glass-button mt-4">Ver todos os vídeos</a>
+        <% } %>
+      </div>
+    <% } %>
+  </main>
+
+  <script>
+    const API = "http://localhost:4000/api";
+    let token = document.cookie.split('token=')[1]?.split(';')[0];
+    
+    async function updateAuthUI() {
+      token = document.cookie.split('token=')[1]?.split(';')[0];
+      if (!token) return;
+      
+      try {
+        const resp = await fetch(`${API}/users/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!resp.ok) return;
+        const user = await resp.json();
+        
+        if (user.avatar_url) {
+          localStorage.setItem('userAvatar', user.avatar_url);
+        }
+        
+        const avatarUrl = localStorage.getItem('userAvatar');
+        const avatarHtml = avatarUrl 
+          ? `<img src="${avatarUrl}" class="w-full h-full object-cover">`
+          : user.name.charAt(0).toUpperCase();
+        
+        const menu = document.getElementById('user-menu');
+        
+        menu.innerHTML = `
+          <a href="/creator" class="btn-icon" title="Creator Studio">
+            <i class="fas fa-video"></i>
+          </a>
+          <button id="btn-logout" class="glass-button">Sair</button>
+          <a href="/user/${user.id}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+            ${avatarHtml}
+          </a>
+        `;
+        
+        document.getElementById('btn-logout')?.addEventListener('click', async () => {
+          await fetch(`${API}/logout`, { method: "POST" });
+          window.location.href = '/auth';
+        });
+      } catch (e) {}
+    }
+    updateAuthUI();
+    
+    const savedTheme = localStorage.getItem('userTheme');
+    if (savedTheme) {
+      try {
+        const theme = JSON.parse(savedTheme);
+        const styles = document.createElement('style');
+        styles.textContent = `
+          .navbar-logo, .channel-avatar { background-color: ${theme.bg} !important; }
+          .theme-accent { color: ${theme.accent} !important; }
+        `;
+        document.head.appendChild(styles);
+      } catch (e) {}
+    }
+    
+function updateDynamicText() {
+      const saved = localStorage.getItem('userPronouns');
+      if (!saved) return;
+      try {
+        const p = JSON.parse(saved);
+        document.querySelectorAll('[data-dynamic-text]').forEach(el => {
+          const key = el.dataset.dynamicText;
+          if (key === 'possessive') el.textContent = p.possessive;
+          else if (key === 'article') el.textContent = p.article;
+          else if (key === 'possessive-plural') el.textContent = p.possessive + 's';
+          else if (key === 'user-no-channels') {
+            if (p.article === 'a') el.textContent = 'Esta usuária não possui canais';
+            else if (p.article === '') el.textContent = 'Esta pessoa não possui canais';
+            else el.textContent = 'Este usuário não possui canais';
+          }
+        });
+      } catch (e) {}
+    }
+    updateDynamicText();
+    
+    function $(sel) { return document.querySelector(sel); }
+    
+    $("#btn-search")?.addEventListener("click", () => {
+      const q = $("#search-input").value.trim();
+      if (q) window.location.href = "/?q=" + encodeURIComponent(q);
+    });
+    
+    $("#search-input")?.addEventListener("keypress", e => {
+      if (e.key === "Enter") {
+        const q = $("#search-input").value.trim();
+        if (q) window.location.href = "/?q=" + encodeURIComponent(q);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= live ? live.title + ' - Ao Vivo' : 'Ao Vivo - PlaysTube v3.0.0' %></title>
+  <script src="https://cdn.jsdelivr.net/npm/flv.js@1.5.0"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    #volume-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: white; border-radius: 50%; cursor: pointer; }
+    #volume-slider::-moz-range-thumb { width: 12px; height: 12px; background: white; border-radius: 50%; cursor: pointer; border: none; }
+    .chat-message { animation: slideIn 0.3s ease-out; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .live-waiting-icon { animation: floatPulse 2s ease-in-out infinite; }
+    @keyframes floatPulse { 0%, 100% { transform: translateY(0) scale(1); opacity: .6; } 50% { transform: translateY(-8px) scale(1.05); opacity: 1; } }
+    .countdown { font-variant-numeric: tabular-nums; }
+    .live-status-bar { animation: statusSlide 0.5s ease-out; }
+    @keyframes statusSlide { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body class="page-enter">
+  <nav class="glass-nav">
+    <div class="navbar">
+      <a href="/" class="navbar-brand">
+        <div class="navbar-logo">
+          <i class="fas fa-play"></i>
+        </div>
+        <span class="gradient-text">PlaysTube</span>
+      </a>
+      <div class="flex items-center gap-4">
+        <a href="/" class="glass-button">Início</a>
+        <% if (live && live.status === 'live') { %><span class="live-badge">AO VIVO</span><% } %>
+      </div>
+    </div>
+  </nav>
+
+  <% if (!live) { %>
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <h1 class="section-title"><i class="fas fa-broadcast-tower" style="color:var(--red);"></i> Ao Vivo</h1>
+    <div id="lives-list" class="video-grid">
+      <div class="empty-state" style="grid-column:1/-1;">
+        <i class="fas fa-video"></i>
+        <p>Nenhuma transmissão ao vivo no momento</p>
+      </div>
+    </div>
+  </main>
+  <script>
+    const API = "http://localhost:4000/api";
+    async function loadLives() {
+      try {
+        const res = await fetch(`${API}/live`);
+        const lives = await res.json();
+        const container = document.getElementById("lives-list");
+        if (lives.length === 0) {
+          container.innerHTML = '<div class="empty-state" style="grid-column:1/-1;"><i class="fas fa-video"></i><p>Nenhuma transmissão ao vivo no momento</p></div>';
+          return;
+        }
+        container.innerHTML = lives.map(live => {
+          const avatarHtml = live.channel_avatar && live.channel_avatar.trim() !== ''
+            ? `<img src="${live.channel_avatar}" class="channel-avatar" style="width:36px;height:36px;font-size:.7rem;">`
+            : `<div class="channel-avatar" style="width:36px;height:36px;font-size:.7rem;">${live.channel_name.charAt(0).toUpperCase()}</div>`;
+          let badge = '';
+          if (live.status === 'live') {
+            badge = '<span class="live-badge" style="position:absolute;top:.5rem;left:.5rem;">AO VIVO</span>';
+          } else {
+            badge = '<span class="glass-badge" style="position:absolute;top:.5rem;left:.5rem;border-color:rgba(139,92,246,0.2);color:var(--purple-light);">EM BREVE</span>';
+          }
+          return `
+            <a href="/live/${live.channel_id}" class="video-card">
+              <div class="video-card-thumb" style="background:#000;display:flex;align-items:center;justify-content:center;">
+                <i class="fas fa-broadcast-tower text-3xl" style="opacity:.3;${live.status !== 'live' ? 'color:var(--purple);' : ''}"></i>
+                ${badge}
+              </div>
+              <div class="video-card-body">
+                <h3 class="video-card-title">${live.title}</h3>
+                <div style="display:flex;align-items:center;gap:.5rem;margin-top:.5rem;">
+                  ${avatarHtml}
+                  <span class="video-card-meta">${live.channel_name}</span>
+                </div>
+              </div>
+            </a>
+          `;
+        }).join("");
+      } catch (err) { console.error(err); }
+    }
+    loadLives();
+  </script>
+
+  <% } else if (live.status === 'cancelled') { %>
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div class="glass-card p-8 max-w-lg mx-auto text-center" style="border-color:rgba(239,68,68,0.15);">
+      <i class="fas fa-times-circle text-5xl mb-4" style="color:var(--red);"></i>
+      <h2 class="text-2xl font-bold mb-2">Transmissão Cancelada</h2>
+      <p style="color:var(--text-secondary);margin-bottom:.5rem;"><strong><%= live.channel_name %></strong> cancelou esta transmissão.</p>
+      <p style="color:var(--text-muted);font-size:.875rem;">Pode ter perdido a hora ou ocorreu um imprevisto.</p>
+      <a href="/live" class="glass-button primary mt-6" style="display:inline-flex;">Ver outras lives</a>
+    </div>
+  </main>
+
+  <% } else if (live.status === 'ended') { %>
+  <%
+    const pronounsMap = { 'ele/dele': 'o', 'ela/dela': 'a', 'não especificado': 'e' };
+    const channelPronoun = live.channel_pronouns || 'não especificado';
+    const obrigado = 'Obrigad' + (pronounsMap[channelPronoun] || 'o');
+  %>
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div class="glass-card p-8 max-w-lg mx-auto text-center" style="border-color:rgba(139,92,246,0.1);">
+      <i class="fas fa-flag-checkered text-5xl mb-4" style="color:var(--purple-light);"></i>
+      <h2 class="text-2xl font-bold mb-2">Transmissão Encerrada</h2>
+      <p style="color:var(--text-secondary);margin-bottom:.5rem;">A transmissão de <strong><%= live.channel_name %></strong> foi encerrada.</p>
+      <p style="color:var(--text-muted);font-size:.875rem;"><%= obrigado %> por assistir!</p>
+      <a href="/live" class="glass-button primary mt-6" style="display:inline-flex;">Ver outras lives</a>
+    </div>
+  </main>
+
+  <% } else if (live.status === 'live') { %>
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div class="flex flex-col lg:flex-row gap-6">
+      <div class="flex-1">
+        <div class="player-container" id="video-container">
+          <video id="live-player" class="w-full h-full object-contain" playsinline webkit-playsinline>
+            Seu navegador não suporta FLV.
+          </video>
+          <div id="live-controls" class="player-controls">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <button id="play-pause"><i class="fas fa-play"></i></button>
+                <div class="flex items-center gap-2 text-white text-sm">
+                  <span id="live-status" style="color:var(--red);"><i class="fas fa-circle text-xs mr-1"></i> AO VIVO</span>
+                </div>
+                <button id="volume-btn"><i class="fas fa-volume-up"></i></button>
+                <input type="range" id="volume-slider" min="0" max="100" step="10" value="100" style="width:80px;height:4px;accent-color:white">
+              </div>
+              <div class="flex items-center gap-3">
+                <button id="fullscreen-btn"><i class="fas fa-expand"></i></button>
+              </div>
+            </div>
+          </div>
+          <span class="live-badge" style="position:absolute;top:1rem;left:1rem;">AO VIVO</span>
+          <div id="live-loading" class="absolute inset-0 flex items-center justify-center bg-black/50">
+            <div class="spinner"></div>
+          </div>
+          <button id="center-play-btn" class="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/40 transition-all w-full h-full cursor-pointer" style="border:none;">
+            <div class="w-20 h-20 bg-white/20 backdrop-blur rounded-full flex items-center justify-center">
+              <i class="fas fa-play text-white text-3xl ml-1"></i>
+            </div>
+          </button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-4 py-4 border-b" style="border-color:var(--border);">
+          <div class="flex items-center gap-2">
+            <span class="live-badge">AO VIVO</span>
+            <span style="color:var(--text-muted);font-size:.875rem;"><i class="fas fa-eye mr-1"></i> <span id="viewer-count">0</span> espectadores</span>
+          </div>
+          <h1 style="font-size:1.15rem;font-weight:700;margin-top:.5rem;width:100%;"><%= live.title %></h1>
+        </div>
+
+        <a href="/channel/<%= live.channel_id %>" class="channel-card mt-4">
+          <% if (live.channel_avatar && live.channel_avatar.trim() !== '') { %>
+            <img src="<%= live.channel_avatar %>" class="channel-avatar">
+          <% } else { %>
+            <div class="channel-avatar"><%= live.channel_name.charAt(0).toUpperCase() %></div>
+          <% } %>
+          <div>
+            <h3 style="font-weight:600;"><%= live.channel_name %></h3>
+            <p style="color:var(--text-muted);font-size:.85rem;">Ver canal</p>
+          </div>
+          <% if (live.description) { %>
+            <p style="color:var(--text-muted);font-size:.85rem;margin-left:auto;max-width:50%;text-align:right;"><%= live.description %></p>
+          <% } %>
+        </a>
+      </div>
+
+      <div class="w-full lg:w-80 flex flex-col">
+        <div class="glass-card flex-1 flex flex-col" style="max-height:600px;border-radius:12px;">
+          <div class="section-title" style="padding:1rem;margin-bottom:0;border-bottom:1px solid var(--border);">
+            <i class="fas fa-comments"></i> Chat
+          </div>
+          <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3" style="min-height:300px;">
+            <div style="text-align:center;color:var(--text-muted);font-size:.875rem;padding:2rem 0;">
+              <i class="fas fa-spinner fa-spin mb-2"></i><br>Conectando ao chat...
+            </div>
+          </div>
+          <div style="padding:1rem;border-top:1px solid var(--border);">
+            <% if (user) { %>
+            <form id="chat-form" class="flex gap-2">
+              <input type="text" id="chat-input" placeholder="Enviar mensagem..." class="glass-input" style="flex:1;">
+              <button type="submit" class="glass-button danger" style="padding:.5rem .75rem;"><i class="fas fa-paper-plane"></i></button>
+            </form>
+            <% } else { %>
+            <a href="/auth" style="display:block;text-align:center;font-size:.875rem;color:var(--text-muted);padding:.75rem;">
+              <i class="fas fa-sign-in-alt mr-1"></i> Você está deslogado(a). Clique aqui para entrar!
+            </a>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const channelId = "<%= live.channel_id %>";
+    const streamKey = "<%= live.stream_key %>";
+    const API = "http://localhost:4000/api";
+    const FLV_URL = "http://localhost:8000/live/" + streamKey + ".flv";
+
+    const video = document.getElementById("live-player");
+    const loading = document.getElementById("live-loading");
+    const playPauseBtn = document.getElementById("play-pause");
+    const volumeBtn = document.getElementById("volume-btn");
+    const volumeSlider = document.getElementById("volume-slider");
+    const fullscreenBtn = document.getElementById("fullscreen-btn");
+    const centerPlayBtn = document.getElementById("center-play-btn");
+
+    centerPlayBtn.addEventListener("click", async () => {
+      try { await video.play(); centerPlayBtn.style.display = 'none'; loading.style.display = 'none'; }
+      catch(e) { console.log("Play click error:", e); }
+    });
+    playPauseBtn.addEventListener("click", () => {
+      if (video.paused) { video.play(); playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>'; }
+      else { video.pause(); playPauseBtn.innerHTML = '<i class="fas fa-play"></i>'; }
+    });
+    volumeBtn.addEventListener("click", () => {
+      if (video.muted) { video.muted = false; volumeBtn.innerHTML = '<i class="fas fa-volume-up"></i>'; volumeSlider.value = video.volume * 100; }
+      else { video.muted = true; volumeBtn.innerHTML = '<i class="fas fa-volume-mute"></i>'; volumeSlider.value = 0; }
+    });
+    video.addEventListener("volumechange", () => { volumeSlider.value = video.muted ? 0 : video.volume * 100; });
+    volumeSlider.addEventListener("input", (e) => { video.volume = e.target.value / 100; });
+    fullscreenBtn.addEventListener("click", () => {
+      if (document.fullscreenElement) { document.exitFullscreen(); }
+      else { document.getElementById("video-container").requestFullscreen(); }
+    });
+
+    if (flvjs.isSupported()) {
+      var player = flvjs.createPlayer({ type: 'flv', url: FLV_URL }, { lazyLoad: true, seekType: 'range' });
+      player.attachMediaElement(video);
+      video.muted = true;
+      player.load();
+      setTimeout(() => { video.muted = false; player.play(); }, 1000);
+      player.onError = function(err) { console.error("[FLV] Player error:", err); loading.innerHTML = '<div class="text-white">Erro: ' + err + '</div>'; };
+      video.onplaying = function() { loading.style.display = 'none'; };
+      video.oncanplay = function() { loading.style.display = 'none'; };
+      video.onloadeddata = function() { loading.style.display = 'none'; };
+    } else { loading.innerHTML = '<div class="text-white">FLV not supported</div>'; }
+
+    const chatMessages = document.getElementById("chat-messages");
+    if (typeof io === 'undefined') {
+      chatMessages.innerHTML = '<div class="text-white/40 text-sm p-4">Chat indisponível</div>';
+    } else {
+    const socket = io();
+    const chatForm = document.getElementById("chat-form");
+    const chatInput = document.getElementById("chat-input");
+    socket.emit("join-live", channelId);
+    socket.on("chat-history", (messages) => {
+      chatMessages.innerHTML = '';
+      if (messages && messages.length > 0) {
+        messages.forEach((msg) => {
+          const div = document.createElement("div");
+          div.className = "chat-message glass";
+          div.style.cssText = "padding:.5rem;border-radius:8px;";
+          div.innerHTML = `<span style="font-weight:500;color:var(--red);">${msg.author || msg.username}:</span> <span style="color:var(--text);">${msg.text || msg.message}</span>`;
+          chatMessages.appendChild(div);
+        });
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+    });
+    socket.on("new-message", (msg) => {
+      if (chatMessages.children.length === 1 && chatMessages.firstElementChild && chatMessages.firstElementChild.textContent.includes('Conectando ao chat')) { chatMessages.innerHTML = ''; }
+      const div = document.createElement("div");
+      div.className = "chat-message glass";
+      div.style.cssText = "padding:.5rem;border-radius:8px;";
+      div.innerHTML = `<span style="font-weight:500;color:var(--red);">${msg.author}:</span> <span style="color:var(--text);">${msg.text}</span>`;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+    chatForm?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = chatInput.value.trim();
+      if (!text) return;
+      try { await fetch(`${API}/live/${channelId}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }); chatInput.value = ''; }
+      catch (err) { console.error(err); }
+    });
+    socket.on("viewer-count", (count) => { document.getElementById("viewer-count").textContent = count; });
+    async function updateViewerCount() {
+      try { const res = await fetch(`${API}/live/${channelId}/viewers`); const data = await res.json(); document.getElementById("viewer-count").textContent = data.count || 0; }
+      catch (e) {}
+    }
+    updateViewerCount();
+    setInterval(updateViewerCount, 10000);
+    }
+  </script>
+
+  <% } else { %>
+  <% 
+    const pronounsMap = { 'ele/dele': 'o', 'ela/dela': 'a', 'não especificado': 'e' };
+    const channelPronoun = live.channel_pronouns || 'não especificado';
+    const atrasadSuffix = pronounsMap[channelPronoun] || 'o';
+    const isLate = live.status === 'delayed';
+    const isScheduled = live.status === 'scheduled' || live.status === 'ready';
+    const isWaiting = live.status === 'waiting';
+    const channelName = live.channel_name || 'Canal';
+  %>
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div class="glass-card p-8 max-w-2xl mx-auto text-center live-status-bar" style="<%= isLate ? 'border-color:rgba(234,179,8,0.2);' : 'border-color:rgba(139,92,246,0.15);' %>">
+      <div class="live-waiting-icon mb-4">
+        <i class="fas fa-broadcast-tower text-5xl" style="color:<%= isLate ? 'var(--yellow)' : 'var(--purple-light)' %>;"></i>
+      </div>
+
+      <% if (isLate) { %>
+        <h2 class="text-2xl font-bold mb-2" style="color:var(--yellow);"><%= channelName %> está atrasad<%= atrasadSuffix %>!</h2>
+        <p style="color:var(--text-secondary);margin-bottom:1.5rem;">Deve ter perdido a hora...</p>
+        <div class="glass p-3 rounded-lg inline-flex items-center gap-2" style="border-color:rgba(234,179,8,0.15);">
+          <i class="fas fa-clock" style="color:var(--yellow);"></i>
+          <span class="countdown" style="color:var(--yellow);font-weight:600;" id="delay-timer"></span>
+        </div>
+      <% } else if (isScheduled) { %>
+        <h2 class="text-2xl font-bold mb-2">A Live está programada para iniciar em breve!</h2>
+        <p style="color:var(--text-secondary);margin-bottom:1.5rem;"><%= channelName %> está se preparando para esta transmissão ao-vivo!</p>
+        <div class="glass p-3 rounded-lg inline-flex items-center gap-2">
+          <i class="fas fa-clock" style="color:var(--purple-light);"></i>
+          <span class="countdown" style="color:var(--purple-light);font-weight:600;" id="countdown-timer"></span>
+        </div>
+      <% } else { %>
+        <h2 class="text-2xl font-bold mb-2">A Live está iniciando em breve!</h2>
+        <p style="color:var(--text-secondary);margin-bottom:1rem;"><%= channelName %> está se preparando para esta transmissão ao-vivo!</p>
+        <div class="flex items-center justify-center gap-2 mt-2">
+          <div class="spinner" style="width:20px;height:20px;border-width:2px;"></div>
+          <span style="color:var(--text-muted);font-size:.875rem;">Aguardando transmissão...</span>
+        </div>
+      <% } %>
+
+      <div class="mt-6 pt-6 border-t" style="border-color:var(--border);">
+        <a href="/channel/<%= live.channel_id %>" class="channel-card" style="display:inline-flex;text-align:left;">
+          <% if (live.channel_avatar && live.channel_avatar.trim() !== '') { %>
+            <img src="<%= live.channel_avatar %>" class="channel-avatar">
+          <% } else { %>
+            <div class="channel-avatar"><%= channelName.charAt(0).toUpperCase() %></div>
+          <% } %>
+          <div>
+            <h3 style="font-weight:600;"><%= channelName %></h3>
+            <p style="color:var(--text-muted);font-size:.85rem;">Ver canal →</p>
+          </div>
+        </a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const API = "http://localhost:4000/api";
+    const channelId = "<%= live.channel_id %>";
+    let scheduledTime = "<%= live.scheduled_at ? live.scheduled_at : '' %>";
+    let isLate = <%= isLate ? 'true' : 'false' %>;
+
+    function updateCountdown() {
+      if (!scheduledTime) return;
+      const target = new Date(scheduledTime.replace(' ', 'T') + 'Z');
+      const now = new Date();
+      const diff = target - now;
+
+      const timerEl = document.getElementById('countdown-timer');
+      const delayEl = document.getElementById('delay-timer');
+
+      if (diff > 0) {
+        const days = Math.floor(diff / 86400000);
+        const hours = Math.floor((diff % 86400000) / 3600000);
+        const mins = Math.floor((diff % 3600000) / 60000);
+        const secs = Math.floor((diff % 60000) / 1000);
+        let text = '';
+        if (days > 0) text += days + 'd ';
+        if (hours > 0 || days > 0) text += String(hours).padStart(2,'0') + ':';
+        text += String(mins).padStart(2,'0') + ':' + String(secs).padStart(2,'0');
+        if (timerEl) timerEl.textContent = 'Inicia em ' + text;
+        if (delayEl) delayEl.textContent = text + ' de atraso';
+      } else {
+        const lateMins = Math.floor(Math.abs(diff) / 60000);
+        if (timerEl) timerEl.textContent = 'Deveria ter começado há ' + lateMins + ' min';
+        if (delayEl) delayEl.textContent = lateMins + 'min de atraso';
+        // Auto-reload to check status change
+        if (lateMins > 10) { setTimeout(() => location.reload(), 2000); }
+      }
+    }
+
+    if (scheduledTime) {
+      updateCountdown();
+      setInterval(updateCountdown, 1000);
+    }
+
+    // Poll for status changes
+    setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/live/${channelId}/status`);
+        const data = await res.json();
+        if (data.status === 'live' || data.status === 'cancelled' || data.status === 'ended' || data.status === 'delayed') {
+          location.reload();
+        }
+      } catch(e) {}
+    }, 10000);
+  </script>
+  <% } %>
+</body>
+</html>

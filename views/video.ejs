@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= video.title %> - PlaysTube v3.0.0</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-enter">
+  <!-- Navbar -->
+  <nav class="glass-nav">
+    <div class="navbar">
+      <a href="/" class="navbar-brand">
+        <div class="navbar-logo">
+          <i class="fas fa-play text-white text-xs"></i>
+        </div>
+        <span class="gradient-text">PlaysTube</span>
+      </a>
+      
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Buscar vídeos...">
+        <button id="btn-search"><i class="fas fa-search"></i></button>
+      </div>
+      
+      <div class="flex items-center gap-4" id="user-menu">
+        <a href="/auth" class="glass-button">Entrar</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="flex flex-col lg:flex-row gap-8">
+      <!-- Video Section -->
+      <div class="flex-1">
+        <div class="player-container">
+          <video id="video-player" class="w-full h-full" playsinline>
+            Seu navegador não suporta HLS.
+          </video>
+          
+          <!-- Custom Controls -->
+          <div id="custom-controls" class="player-controls">
+            <div id="progress-container" class="player-progress">
+              <div id="progress-bar" class="player-progress-fill" style="width: 0%;"></div>
+              <div id="progress-hover" class="absolute top-0 h-full bg-white/20 rounded-full hidden" style="width: 0%"></div>
+              <div id="progress-thumb" class="player-progress-thumb" style="left: 0%;"></div>
+            </div>
+            
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <button id="play-pause" class="text-white text-xl hover:opacity-80 transition-opacity">
+                  <i class="fas fa-play"></i>
+                </button>
+                <div class="flex items-center gap-2 text-white text-sm">
+                  <span id="current-time">0:00</span>
+                  <span>/</span>
+                  <span id="duration">0:00</span>
+                </div>
+                <button id="volume-btn" class="text-white text-lg hover:opacity-80 transition-opacity">
+                  <i class="fas fa-volume-up"></i>
+                </button>
+                <input type="range" id="volume-slider" min="0" max="100" step="10" value="100" style="width:80px;height:4px;accent-color:white">
+              </div>
+              
+              <div class="flex items-center gap-3">
+                <button id="pip-btn" class="text-white text-lg hover:opacity-80 transition-opacity" title="Picture-in-Picture">
+                  <i class="fas fa-clone"></i>
+                </button>
+                <select id="speed-select" class="glass-input" style="padding:0.25rem 1.5rem 0.25rem 0.5rem;width:auto;font-size:.75rem;">
+                  <option value="0.5">0.5x</option>
+                  <option value="1" selected>1x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
+                </select>
+                <span id="keyboard-hint" class="text-white/40 text-xs cursor-help" title="Espaço: Play/Pause | ← →: 10s | ↑ ↓: Volume | F: Tela cheia | M: Mute">⌨</span>
+                <select id="resolution-select" class="glass-input" style="padding:0.25rem 1.5rem 0.25rem 0.5rem;width:auto;font-size:.75rem;">
+                  <% if (video.resolutions && video.resolutions.length > 0) { %>
+                    <% video.resolutions.forEach(function(r) { %>
+                      <option value="<%- r.url %>"><%- r.label %></option>
+                    <% }); %>
+                  <% } else { %>
+                    <option value="">Auto</option>
+                  <% } %>
+                </select>
+                <button id="fullscreen-btn" class="text-white text-lg hover:opacity-80 transition-opacity">
+                  <i class="fas fa-expand"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Loading Spinner -->
+          <div id="video-loading" class="absolute inset-0 flex items-center justify-center bg-black/50 hidden">
+            <div class="spinner"></div>
+          </div>
+          
+          <!-- Play Button Overlay -->
+          <div id="play-overlay" class="absolute inset-0 flex items-center justify-center cursor-pointer bg-black/30 hover:bg-black/20 transition-colors">
+            <div class="w-20 h-20 bg-white/90 rounded-full flex items-center justify-center hover:scale-110 transition-transform hover:bg-white shadow-2xl">
+              <i class="fas fa-play text-black text-2xl ml-1"></i>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Context Menu -->
+        <div id="context-menu" class="context-menu hidden">
+          <div class="px-4 py-2 border-b border-white/5">
+            <div class="text-sm font-medium text-white">Estatísticas do Vídeo</div>
+            <div class="text-xs mt-1" id="stats-url" style="color:var(--text-muted);"></div>
+          </div>
+          <button id="ctx-copy-link" class="menu-item">
+            <i class="fas fa-link"></i> Copiar link
+          </button>
+          <button id="ctx-stats" class="menu-item">
+            <i class="fas fa-chart-bar"></i> Ver estatísticas
+          </button>
+          <div class="menu-divider"></div>
+          <div class="px-4 py-1 text-xs" style="color:var(--text-muted);">Resolução: <span id="ctx-resolution">-</span></div>
+          <div class="px-4 py-1 text-xs" style="color:var(--text-muted);">Bitrate: <span id="ctx-bitrate">-</span></div>
+          <div class="px-4 py-1 text-xs" style="color:var(--text-muted);">Quadros: <span id="ctx-fps">-</span></div>
+        </div>
+        
+        <h1 style="font-size:1.25rem;font-weight:700;margin:1rem 0 0.5rem;"><%= video.title %></h1>
+        
+        <div class="flex flex-wrap items-center gap-4 py-4 border-b" style="border-color:var(--border);">
+          <div class="flex items-center gap-4" style="color:var(--text-muted);font-size:.875rem;">
+            <span><i class="fas fa-eye mr-1"></i> <%= video.views.toLocaleString() %> visualizações</span>
+            <span><i class="fas fa-calendar mr-1"></i> <%= new Date(video.createdAt).toLocaleDateString('pt-BR') %></span>
+          </div>
+          
+          <!-- Like/Dislike -->
+          <div class="flex items-center gap-2">
+            <button id="like-btn" class="reaction-btn">
+              <i class="fas fa-thumbs-up"></i>
+              <span id="like-count">0</span>
+            </button>
+            <button id="dislike-btn" class="reaction-btn">
+              <i class="fas fa-thumbs-down"></i>
+              <span id="dislike-count">0</span>
+            </button>
+          </div>
+          
+          <div class="flex items-center gap-2 ml-auto">
+            <button id="share-btn" class="reaction-btn">
+              <i class="fas fa-share"></i> Compartilhar
+            </button>
+            <% if (typeof user !== 'undefined' && user && user.id === video.ownerId) { %>
+              <button id="edit-video-btn" class="glass-button">
+                <i class="fas fa-edit"></i> Editar
+              </button>
+            <% } %>
+          </div>
+        </div>
+        
+        <!-- Channel -->
+        <a href="/channel/<%= video.channelId %>" class="channel-card mt-4">
+          <% if (video.channelAvatarUrl && video.channelAvatarUrl.trim() !== '') { %>
+            <img src="<%= video.channelAvatarUrl %>" class="channel-avatar">
+          <% } else { %>
+            <div class="channel-avatar">
+              <%= video.channel.charAt(0).toUpperCase() %>
+            </div>
+          <% } %>
+          <div>
+            <h3 style="font-weight:600;color:var(--text);"><%= video.channel %></h3>
+            <p style="color:var(--text-muted);font-size:.85rem;">Ver canal <i class="fas fa-arrow-right ml-1"></i></p>
+          </div>
+        </a>
+        
+        <!-- Description -->
+        <div class="description-box mt-4">
+          <h3>Descrição</h3>
+          <p><%= video.description || 'Sem descrição' %></p>
+        </div>
+        
+        <!-- Tags -->
+        <% if (video.tags.length > 0) { %>
+          <div class="flex flex-wrap gap-2 mt-4">
+            <% video.tags.forEach(function(tag) { %>
+              <a href="/?q=<%= tag %>" class="tag">#<%= tag %></a>
+            <% }); %>
+          </div>
+        <% } %>
+        
+        <!-- Comments -->
+        <div class="mt-8">
+          <h3 class="section-title"><i class="fas fa-comments"></i> Comentários (<%= video.commentCount %>)</h3>
+          
+          <form id="comment-form" class="flex gap-4 mb-6">
+            <div class="comment-avatar" id="comment-avatar">?</div>
+            <div class="flex-1">
+              <div id="comment-logged-in" class="hidden">
+                <textarea id="comment-input" placeholder="Adicione um comentário..." class="glass-input" rows="2"></textarea>
+                <div class="flex justify-end mt-2">
+                  <button type="submit" class="glass-button">Comentar</button>
+                </div>
+              </div>
+              <div id="comment-login-prompt" class="">
+                <p style="color:var(--text-muted);font-size:.875rem;padding:.75rem 0;"><a href="/auth" style="color:var(--purple-light);">Entre</a> para comentar.</p>
+              </div>
+            </div>
+          </form>
+          
+          <div id="comment-list" class="space-y-4"></div>
+        </div>
+      </div>
+      
+      <!-- Sidebar -->
+      <div class="w-full lg:w-80">
+        <h3 class="section-title">Próximos</h3>
+        <div class="space-y-3" id="recommendations"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Edit Video Modal -->
+  <div id="edit-modal" class="modal-overlay hidden">
+    <div class="glass-modal w-full max-w-md">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold">Editar Vídeo</h2>
+        <button id="modal-close" class="text-2xl transition-colors" style="color:var(--text-muted);">&times;</button>
+      </div>
+      <form id="video-edit-form">
+        <div class="mb-4">
+          <label class="block text-sm font-medium" style="color:var(--text-secondary);margin-bottom:.5rem;">Título</label>
+          <input type="text" id="edit-title" value="<%= video.title %>" class="glass-input">
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium" style="color:var(--text-secondary);margin-bottom:.5rem;">Descrição</label>
+          <textarea id="edit-desc" rows="4" class="glass-input"><%= video.description || '' %></textarea>
+        </div>
+        <button type="submit" class="glass-button w-full" style="justify-content:center;">
+          <i class="fas fa-save"></i> Salvar
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const API = "http://localhost:4000/api";
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(?:^| )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    let token = getCookie('token');
+    if (!token) token = localStorage.getItem('token');
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('_token');
+    if (urlToken && !token) { token = urlToken; window.history.replaceState({}, '', window.location.pathname); }
+    const videoId = "<%= video.id %>";
+    let currentUser = null;
+
+    async function updateAuthUI() {
+      token = getCookie('token');
+      if (!token) token = localStorage.getItem('token');
+      if (!token) {
+        document.getElementById('comment-logged-in')?.classList.add('hidden');
+        document.getElementById('comment-login-prompt')?.classList.remove('hidden');
+        return;
+      }
+      try {
+        const resp = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!resp.ok) {
+          document.getElementById('comment-logged-in')?.classList.add('hidden');
+          document.getElementById('comment-login-prompt')?.classList.remove('hidden');
+          return;
+        }
+        currentUser = await resp.json();
+        
+        document.getElementById('comment-logged-in')?.classList.remove('hidden');
+        document.getElementById('comment-login-prompt')?.classList.add('hidden');
+        
+        if (currentUser.avatar_url) {
+          localStorage.setItem('userAvatar', currentUser.avatar_url);
+        }
+        
+        const avatarUrl = localStorage.getItem('userAvatar');
+        const avatarHtml = avatarUrl 
+          ? `<img src="${avatarUrl}" class="w-full h-full object-cover rounded-full">`
+          : currentUser.name.charAt(0).toUpperCase();
+        
+        const menu = document.getElementById('user-menu');
+        menu.innerHTML = `
+          <a href="/creator" class="btn-icon" title="Creator Studio">
+            <i class="fas fa-video"></i>
+          </a>
+          <button id="btn-logout" class="glass-button">Sair</button>
+          <a href="/user/${currentUser.id}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+            ${avatarHtml}
+          </a>
+        `;
+        document.getElementById('btn-logout').addEventListener('click', async () => {
+          await fetch(`${API}/logout`, { method: "POST" });
+          window.location.href = '/auth';
+        });
+        
+        document.getElementById('comment-avatar').textContent = currentUser.name.charAt(0).toUpperCase();
+        if (currentUser.avatar_url) {
+          document.getElementById('comment-avatar').innerHTML = `<img src="${currentUser.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+        }
+      } catch (e) {
+        document.getElementById('comment-logged-in')?.classList.add('hidden');
+        document.getElementById('comment-login-prompt')?.classList.remove('hidden');
+      }
+    }
+    updateAuthUI();
+    
+    const savedTheme = localStorage.getItem('userTheme');
+    if (savedTheme) {
+      try {
+        const theme = JSON.parse(savedTheme);
+        const themeStyles = document.createElement('style');
+        themeStyles.textContent = `
+          .navbar-logo, .channel-avatar { background-color: ${theme.bg} !important; }
+          .theme-accent { color: ${theme.accent} !important; }
+        `;
+        document.head.appendChild(themeStyles);
+      } catch (e) {}
+    }
+    
+    function updateDynamicText() {
+      const saved = localStorage.getItem('userPronouns');
+      if (!saved) return;
+      try {
+        const p = JSON.parse(saved);
+        document.querySelectorAll('[data-dynamic-text]').forEach(el => {
+          const key = el.dataset.dynamicText;
+          if (key === 'possessive') el.textContent = p.possessive;
+          else if (key === 'article') el.textContent = p.article;
+          else if (key === 'possessive-plural') el.textContent = p.possessive + 's';
+          else if (key === 'user-no-channels') {
+            if (p.article === 'a') el.textContent = 'Esta usuária não possui canais';
+            else if (p.article === '') el.textContent = 'Esta pessoa não possui canais';
+            else el.textContent = 'Este usuário não possui canais';
+          }
+        });
+      } catch (e) {}
+    }
+    updateDynamicText();
+    
+    function $(sel) { return document.querySelector(sel); }
+
+    const video = document.getElementById("video-player");
+    const resolutions = <%- JSON.stringify(video.resolutions) %>;
+    let hls = null;
+    
+    function loadSource(url) {
+      if (Hls.isSupported()) {
+        if (hls) hls.destroy();
+        hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.log("HLS manifest loaded");
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = url;
+      }
+    }
+    
+    if (resolutions && resolutions.length > 0) {
+      loadSource(resolutions[0].url);
+    }
+    
+    const playPauseBtn = document.getElementById('play-pause');
+    const volumeBtn = document.getElementById('volume-btn');
+    const volumeSlider = document.getElementById('volume-slider');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('progress-bar');
+    const progressHover = document.getElementById('progress-hover');
+    const currentTimeEl = document.getElementById('current-time');
+    const durationEl = document.getElementById('duration');
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    const pipBtn = document.getElementById('pip-btn');
+    const speedSelect = document.getElementById('speed-select');
+    const playOverlay = document.getElementById('play-overlay');
+    const videoContainer = document.getElementById('video-container') || document.querySelector('.player-container');
+    const customControls = document.getElementById('custom-controls');
+    const videoLoading = document.getElementById('video-loading');
+    const contextMenu = document.getElementById('context-menu');
+    
+    let controlsTimeout = null;
+    
+    function showControls() {
+      customControls?.classList.add('show-controls');
+      clearTimeout(controlsTimeout);
+      controlsTimeout = setTimeout(() => {
+        if (!video.paused) customControls?.classList.remove('show-controls');
+      }, 3000);
+    }
+    
+    video.addEventListener('mousemove', showControls);
+    videoContainer?.addEventListener('mousemove', showControls);
+    customControls?.addEventListener('mouseenter', () => clearTimeout(controlsTimeout));
+    customControls?.addEventListener('mouseleave', showControls);
+    video.addEventListener('click', () => {
+      video.paused ? video.play() : video.pause();
+    });
+    
+    function formatTime(seconds) {
+      if (isNaN(seconds)) return '0:00';
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+    
+    function updatePlayPauseIcon() {
+      playPauseBtn.innerHTML = video.paused ? '<i class="fas fa-play"></i>' : '<i class="fas fa-pause"></i>';
+    }
+    
+    playPauseBtn.addEventListener('click', () => {
+      if (video.paused) video.play(); else video.pause();
+    });
+    
+    playOverlay.addEventListener('click', () => {
+      if (video.paused) video.play(); else video.pause();
+    });
+    
+    video.addEventListener('play', () => {
+      updatePlayPauseIcon();
+      playOverlay.classList.add('hidden');
+      customControls?.classList.add('show-controls');
+    });
+    video.addEventListener('pause', () => {
+      updatePlayPauseIcon();
+      playOverlay.classList.remove('hidden');
+    });
+    
+    video.addEventListener('timeupdate', () => {
+      if (video.duration) {
+        const percent = (video.currentTime / video.duration) * 100;
+        progressBar.style.width = percent + '%';
+      }
+      currentTimeEl.textContent = formatTime(video.currentTime);
+    });
+    
+    video.addEventListener('loadedmetadata', () => {
+      durationEl.textContent = formatTime(video.duration);
+    });
+    
+    video.addEventListener('waiting', () => videoLoading?.classList.remove('hidden'));
+    video.addEventListener('canplay', () => videoLoading?.classList.add('hidden'));
+    
+    progressContainer.addEventListener('click', (e) => {
+      const rect = progressContainer.getBoundingClientRect();
+      const percent = (e.clientX - rect.left) / rect.width;
+      video.currentTime = percent * video.duration;
+    });
+    
+    progressContainer.addEventListener('mousemove', (e) => {
+      const rect = progressContainer.getBoundingClientRect();
+      const percent = ((e.clientX - rect.left) / rect.width) * 100;
+      progressHover.style.width = percent + '%';
+      progressHover.classList.remove('hidden');
+    });
+    
+    progressContainer.addEventListener('mouseleave', () => {
+      progressHover.classList.add('hidden');
+    });
+    
+    video.addEventListener('volumechange', () => {
+      volumeSlider.value = video.muted ? 0 : Math.round(video.volume * 100);
+      volumeBtn.innerHTML = video.muted ? '<i class="fas fa-volume-mute"></i>' : video.volume > 0.5 ? '<i class="fas fa-volume-up"></i>' : '<i class="fas fa-volume-down"></i>';
+    });
+    
+    volumeBtn.addEventListener('click', () => {
+      if (video.muted) {
+        video.muted = false;
+        volumeSlider.value = Math.round(video.volume * 100);
+      } else {
+        video.muted = true;
+        volumeSlider.value = 0;
+      }
+    });
+    
+    volumeSlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value);
+      video.volume = val / 100;
+      video.muted = val === 0;
+    });
+    
+    fullscreenBtn.addEventListener('click', () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        videoContainer?.requestFullscreen();
+      }
+    });
+    
+    document.addEventListener('fullscreenchange', () => {
+      fullscreenBtn.innerHTML = document.fullscreenElement ? '<i class="fas fa-compress"></i>' : '<i class="fas fa-expand"></i>';
+    });
+    
+    pipBtn.addEventListener('click', async () => {
+      try {
+        if (document.pictureInPictureElement) {
+          await document.exitPictureInPicture();
+        } else {
+          await video.requestPictureInPicture();
+        }
+      } catch (e) {
+        console.error('PiP error:', e);
+      }
+    });
+    
+    speedSelect.addEventListener('change', (e) => {
+      video.playbackRate = parseFloat(e.target.value);
+    });
+    
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+      else if (e.code === 'ArrowLeft') video.currentTime -= 10;
+      else if (e.code === 'ArrowRight') video.currentTime += 10;
+      else if (e.code === 'ArrowUp') { video.volume = Math.min(1, video.volume + 0.1); volumeSlider.value = Math.round(video.volume * 100); }
+      else if (e.code === 'ArrowDown') { video.volume = Math.max(0, video.volume - 0.1); volumeSlider.value = Math.round(video.volume * 100); }
+      else if (e.code === 'KeyF') { if (document.fullscreenElement) document.exitFullscreen(); else videoContainer?.requestFullscreen(); }
+      else if (e.code === 'KeyM') volumeBtn.click();
+    });
+    
+    video.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      contextMenu.style.left = e.clientX + 'px';
+      contextMenu.style.top = e.clientY + 'px';
+      contextMenu.classList.remove('hidden');
+      document.getElementById('stats-url').textContent = window.location.href;
+      if (hls && hls.levels && hls.levels.length > 0) {
+        const level = hls.levels[hls.currentLevel];
+        document.getElementById('ctx-resolution').textContent = level.height + 'p';
+        document.getElementById('ctx-bitrate').textContent = (level.bitrate / 1000).toFixed(0) + ' kbps';
+      }
+    });
+    
+    document.addEventListener('click', () => contextMenu.classList.add('hidden'));
+    
+    document.getElementById('ctx-copy-link').addEventListener('click', () => {
+      navigator.clipboard.writeText(window.location.href);
+    });
+    
+    document.getElementById('ctx-stats').addEventListener('click', () => {
+      const stats = `Vídeo: ${video.videoWidth}x${video.videoHeight}\nDuração: ${formatTime(video.duration)}\nUrl: ${window.location.href}`;
+      navigator.clipboard.writeText(stats);
+    });
+    
+    document.getElementById('resolution-select').addEventListener('change', (e) => {
+      if (!e.target.value) return;
+      const currentTime = video.currentTime;
+      loadSource(e.target.value);
+      video.addEventListener('loadedmetadata', () => { video.currentTime = currentTime; }, { once: true });
+    });
+
+    const initialLikes = <%= video.likes || 0 %>;
+    const initialDislikes = <%= video.dislikes || 0 %>;
+    const initialUserLike = "<%= video.userLike || '' %>";
+    
+    document.getElementById('like-count').textContent = initialLikes;
+    document.getElementById('dislike-count').textContent = initialDislikes;
+    
+    if (initialUserLike === 'like') {
+      document.getElementById('like-btn').classList.add('liked');
+    } else if (initialUserLike === 'dislike') {
+      document.getElementById('dislike-btn').classList.add('disliked');
+    }
+    
+    document.getElementById('like-btn').addEventListener('click', async () => {
+      if (!token) { return; }
+      
+      const btn = document.getElementById('like-btn');
+      const isLiked = !btn.classList.contains('liked');
+      
+      try {
+        if (isLiked) {
+          await fetch(`${API}/videos/${videoId}/like`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ type: 'like' })
+          });
+          btn.classList.add('liked');
+          document.getElementById('dislike-btn').classList.remove('disliked');
+          document.getElementById('like-count').textContent = initialLikes + 1;
+        } else {
+          await fetch(`${API}/videos/${videoId}/like`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          btn.classList.remove('liked');
+          document.getElementById('like-count').textContent = initialLikes;
+        }
+      } catch (e) { console.error(e); }
+    });
+    
+    document.getElementById('dislike-btn').addEventListener('click', async () => {
+      if (!token) { return; }
+      
+      const btn = document.getElementById('dislike-btn');
+      const isDisliked = !btn.classList.contains('disliked');
+      
+      try {
+        if (isDisliked) {
+          await fetch(`${API}/videos/${videoId}/like`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ type: 'dislike' })
+          });
+          btn.classList.add('disliked');
+          document.getElementById('like-btn').classList.remove('liked');
+          document.getElementById('dislike-count').textContent = initialDislikes + 1;
+        } else {
+          await fetch(`${API}/videos/${videoId}/like`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          btn.classList.remove('disliked');
+          document.getElementById('dislike-count').textContent = initialDislikes;
+        }
+      } catch (e) { console.error(e); }
+    });
+
+    const shareBtn = document.getElementById('share-btn');
+    if (shareBtn) {
+      shareBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(window.location.href);
+      });
+    }
+
+    async function loadComments() {
+      try {
+        const resp = await fetch(`${API}/videos/${videoId}/comments`);
+        const comments = await resp.json();
+        const list = document.getElementById('comment-list');
+        if (!list) return;
+        
+        if (comments.length === 0) {
+          list.innerHTML = '<p style="color:var(--text-muted);font-size:.9rem;">Seja o primeiro a comentar!</p>';
+          return;
+        }
+        
+        list.innerHTML = comments.map(c => {
+          const avatarHtml = c.author_avatar && c.author_avatar.trim() !== '' 
+            ? '<img src="' + c.author_avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
+            : '<span style="font-weight:700;color:white;font-size:.85rem;">' + c.author_name.charAt(0).toUpperCase() + '</span>';
+          return `
+            <div class="comment">
+              <div class="comment-avatar">
+                ` + avatarHtml + `
+              </div>
+              <div>
+                <div class="comment-author">${c.author_name}</div>
+                <div class="comment-text">${c.text}</div>
+              </div>
+            </div>
+          `;
+        }).join("");
+      } catch (e) { console.error(e); }
+    }
+    loadComments();
+
+    const commentForm = document.getElementById('comment-form');
+    const commentInput = document.getElementById('comment-input');
+    if (commentForm && commentInput) {
+      commentForm.addEventListener("submit", async e => {
+        e.preventDefault();
+        const text = commentInput.value.trim();
+        if (!text) return;
+        
+        await fetch(`${API}/videos/${videoId}/comments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text })
+        });
+        
+        commentInput.value = "";
+        loadComments();
+      });
+    }
+
+    async function loadRecs() {
+      try {
+        const resp = await fetch(`${API}/recommendations?exclude=${videoId}`);
+        const videos = await resp.json();
+        const container = document.getElementById('recommendations');
+        if (!container) return;
+        
+        container.innerHTML = videos.slice(0, 10).map(v => {
+          const channelAvatar = v.channelAvatar && v.channelAvatar.trim() !== '' 
+            ? '<img src="' + v.channelAvatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
+            : '<span style="font-weight:700;color:white;font-size:.7rem;">' + v.channel.charAt(0).toUpperCase() + '</span>';
+          return `
+            <a href="/video/${v.id}" class="rec-card">
+              <img src="${v.thumbnailUrl || '/static/' + v.id + '/thumbnail.jpg'}">
+              <div class="flex-1 min-w-0">
+                <div class="rec-card-title">${v.title}</div>
+                <div class="flex items-center gap-1" style="margin-top:0.2rem;">
+                  <div class="channel-avatar" style="width:28px;height:28px;font-size:.65rem;">
+                    ${channelAvatar}
+                  </div>
+                  <span class="rec-card-meta">${v.channel}</span>
+                </div>
+                <div class="rec-card-meta">${v.views} visualizações</div>
+              </div>
+            </a>
+          `;
+        }).join("");
+      } catch (e) {}
+    }
+    loadRecs();
+
+    const btnSearch = document.getElementById('btn-search');
+    const searchInput = document.getElementById('search-input');
+    if (btnSearch && searchInput) {
+      btnSearch.addEventListener("click", () => {
+        const q = searchInput.value.trim();
+        if (q) window.location.href = "/?q=" + encodeURIComponent(q);
+      });
+    }
+
+    // Edit video modal
+    const editModal = document.getElementById("edit-modal");
+    if (editModal) {
+      document.getElementById("edit-video-btn")?.addEventListener("click", () => {
+        editModal.classList.remove("hidden");
+      });
+      document.getElementById("modal-close")?.addEventListener("click", () => {
+        editModal.classList.add("hidden");
+      });
+      editModal.addEventListener("click", (e) => { if (e.target === editModal) editModal.classList.add("hidden"); });
+      
+      document.getElementById("video-edit-form")?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const title = document.getElementById("edit-title").value.trim();
+        const description = document.getElementById("edit-desc").value.trim();
+        
+        const resp = await fetch(`${API}/videos/<%= video.id %>`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ title, description })
+        });
+        
+        if (resp.ok) {
+          location.reload();
+        } else {
+          alert("Erro ao atualizar");
+        }
+      });
+    }
+  </script>
+</body>
+</html>

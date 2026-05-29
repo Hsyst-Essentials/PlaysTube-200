@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= profileUser.name %> - PlaysTube v3.0.0</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-enter">
+  <!-- Navbar -->
+  <nav class="glass-nav">
+    <div class="navbar">
+      <a href="/" class="navbar-brand">
+        <div class="navbar-logo">
+          <i class="fas fa-play text-white text-xs"></i>
+        </div>
+        <span class="gradient-text">PlaysTube</span>
+      </a>
+      
+      <div class="search-bar">
+        <input type="text" id="search-input" placeholder="Buscar vídeos...">
+        <button id="btn-search"><i class="fas fa-search"></i></button>
+      </div>
+      
+      <div class="flex items-center gap-4" id="user-menu">
+        <a href="/auth" class="glass-button">Entrar</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Profile -->
+  <main class="max-w-4xl mx-auto px-4 py-8">
+    <!-- Profile Header -->
+    <div class="glass-card p-8 mb-6">
+      <div class="flex flex-col md:flex-row gap-6 items-center md:items-start">
+        <div class="channel-avatar" style="width:96px;height:96px;font-size:2.5rem;">
+          <% if (profileUser.avatar_url) { %>
+            <img src="<%= profileUser.avatar_url %>" alt="<%= profileUser.name %>" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
+          <% } else { %>
+            <%= profileUser.name.charAt(0).toUpperCase() %>
+          <% } %>
+        </div>
+        
+        <div class="flex-1 text-center md:text-left">
+          <div class="flex flex-col md:flex-row md:items-center gap-2 mb-2">
+            <h1 style="font-size:1.75rem;font-weight:700;"><%= profileUser.name %></h1>
+            <% if (profileUser.pronouns) { %>
+              <span style="color:var(--text-muted);font-size:.875rem;">(<%= profileUser.pronouns %>)</span>
+            <% } %>
+          </div>
+          
+          <% if (profileUser.bio) { %>
+            <p style="color:var(--text-secondary);margin-top:.5rem;"><%= profileUser.bio %></p>
+          <% } %>
+          
+<% var isOwner = typeof isOwner !== 'undefined' && isOwner; %>
+<button id="btn-edit-profile" class="glass-button mt-4 <%= !isOwner ? 'hidden' : '' %>">
+  <i class="fas fa-edit"></i> Editar Perfil
+</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Channels -->
+    <div class="glass-card p-6">
+      <h2 class="section-title"><i class="fas fa-tv"></i> Canais</h2>
+      
+      <% if (typeof channels !== 'undefined' && channels.length > 0) { %>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <% channels.forEach(function(c) { %>
+            <a href="/channel/<%= c.id %>" class="channel-card" style="text-decoration:none;">
+              <div class="channel-avatar">
+                <%= c.name.charAt(0).toUpperCase() %>
+              </div>
+              <div>
+                <h3 style="font-weight:600;"><%= c.name %></h3>
+                <p style="color:var(--text-muted);font-size:.875rem;"><%= c.video_count || 0 %> vídeos</p>
+              </div>
+            </a>
+          <%}); %>
+        </div>
+      <% } else { %>
+        <p style="color:var(--text-muted);text-align:center;padding:2rem;" data-dynamic-text="user-no-channels">Este usuário não possui canais</p>
+      <% } %>
+    </div>
+  </main>
+
+  <!-- Edit Modal -->
+  <div id="edit-modal" class="modal-overlay hidden">
+    <div class="glass-modal w-full max-w-md">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold">Editar Perfil</h2>
+        <button id="modal-close" class="text-2xl transition-colors" style="color:var(--text-muted);">&times;</button>
+      </div>
+        
+        <form id="user-edit-form">
+          <div class="mb-4">
+            <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Nome</label>
+            <input type="text" id="edit-name" value="<%= profileUser.name %>" class="glass-input">
+          </div>
+          
+          <div class="mb-4">
+            <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Pronomes</label>
+            <select id="edit-pronouns" class="glass-input">
+              <option value="">Selecione seus pronomes</option>
+              <option value="ele/dele" <%= profileUser.pronouns === 'ele/dele' ? 'selected' : '' %>>Ele/Dele</option>
+              <option value="ela/dela" <%= profileUser.pronouns === 'ela/dela' ? 'selected' : '' %>>Ela/Dela</option>
+              <option value="não especificado" <%= profileUser.pronouns === 'não especificado' ? 'selected' : '' %>>Não especificado</option>
+            </select>
+          </div>
+          
+          <div class="mb-4">
+            <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Bio</label>
+            <textarea id="edit-bio" rows="3" placeholder="Fale sobre você..." class="glass-input"><%= profileUser.bio || '' %></textarea>
+          </div>
+          
+          <div class="mb-6">
+            <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Avatar</label>
+            <div class="flex items-center gap-4">
+              <div class="channel-avatar" style="width:56px;height:56px;font-size:1.25rem;">
+                <% if (profileUser.avatar_url) { %>
+                  <img src="<%= profileUser.avatar_url %>" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
+                <% } else { %>
+                  <%= profileUser.name.charAt(0).toUpperCase() %>
+                <% } %>
+              </div>
+              <label class="glass-button cursor-pointer">
+                <i class="fas fa-upload"></i> Alterar
+                <input type="file" id="avatar-input" accept="image/*" class="hidden">
+              </label>
+            </div>
+          </div>
+          
+          <button type="submit" class="glass-button w-full" style="justify-content:center;">
+            Salvar
+          </button>
+        </form>
+      </div>
+    </div>
+
+  <script>
+    const API = "http://localhost:4000/api";
+    let token = document.cookie.split('token=')[1]?.split(';')[0];
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('_token');
+    if (urlToken && !token) { token = urlToken; window.history.replaceState({}, '', window.location.pathname); }
+    let currentUserId = null;
+    
+const profileUserIdRendered = "<%= profileUser.id %>";
+    const isOwner = <%= typeof isOwner !== 'undefined' && isOwner %>;
+    
+    async function updateAuthUI() {
+      token = document.cookie.split('token=')[1]?.split(';')[0] || localStorage.getItem('token');
+      if (!token) return;
+      try {
+        const resp = await fetch(`${API}/users/me`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!resp.ok) return;
+        const user = await resp.json();
+        currentUserId = user.id;
+        
+        localStorage.setItem('userAvatar', user.avatar_url || '');
+        
+        const avatarUrl = localStorage.getItem('userAvatar');
+        const avatarHtml = avatarUrl && avatarUrl.trim() !== '' 
+          ? `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+          : user.name.charAt(0).toUpperCase();
+        
+        const menu = document.getElementById('user-menu');
+        menu.innerHTML = `
+          <a href="/creator" class="btn-icon" title="Creator Studio"><i class="fas fa-video"></i></a>
+          <button id="btn-logout" class="glass-button">Sair</button>
+          <a href="/user/${user.id}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+            ${avatarHtml}
+          </a>
+        `;
+      } catch (e) {}
+    }
+updateAuthUI();
+    
+    const savedTheme = localStorage.getItem('userTheme');
+    if (savedTheme) {
+      try {
+        const theme = JSON.parse(savedTheme);
+        const styles = document.createElement('style');
+        styles.textContent = `
+          .navbar-logo, .channel-avatar { background-color: ${theme.bg} !important; }
+          .theme-accent { color: ${theme.accent} !important; }
+        `;
+        document.head.appendChild(styles);
+      } catch (e) {}
+    }
+    
+    if (!localStorage.getItem('userPronouns') && '<%= profileUser.pronouns %>') {
+      const pronouns = '<%= profileUser.pronouns %>';
+      const colors = {
+        'ele/dele': { article: 'o', possessive: 'seu' },
+        'ela/dela': { article: 'a', possessive: 'sua' },
+        'não especificado': { article: '', possessive: 'seu' }
+      };
+      const theme = colors[pronouns];
+      if (theme) {
+        localStorage.setItem('userPronouns', JSON.stringify({ article: theme.article, possessive: theme.possessive }));
+      }
+    }
+    
+    function updateDynamicText() {
+      const saved = localStorage.getItem('userPronouns');
+      if (!saved) return;
+      try {
+        const p = JSON.parse(saved);
+        document.querySelectorAll('[data-dynamic-text]').forEach(el => {
+          const key = el.dataset.dynamicText;
+          if (key === 'possessive') el.textContent = p.possessive;
+          else if (key === 'article') el.textContent = p.article;
+          else if (key === 'possessive-plural') el.textContent = p.possessive + 's';
+          else if (key === 'user-no-channels') {
+            if (p.article === 'a') el.textContent = 'Esta usuária não possui canais';
+            else if (p.article === '') el.textContent = 'Esta pessoa não possui canais';
+            else el.textContent = 'Este usuário não possui canais';
+          }
+        });
+      } catch (e) {}
+    }
+    updateDynamicText();
+    
+    function $(sel) { return document.querySelector(sel); }
+    
+    const modal = document.getElementById("edit-modal");
+    if (modal) {
+      document.getElementById('btn-edit-profile').addEventListener("click", () => modal.classList.remove("hidden"));
+      document.getElementById('modal-close').addEventListener("click", () => modal.classList.add("hidden"));
+      modal.addEventListener("click", e => { if (e.target === modal) modal.classList.add("hidden"); });
+      
+      document.getElementById('avatar-input').addEventListener("change", async e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const formData = new FormData();
+        formData.append("avatar", file);
+        
+        const resp = await fetch(`${API}/users/me/avatar`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData
+        });
+        
+if (resp.ok) {
+          const data = await resp.json();
+          if (data.avatar_url) {
+            localStorage.setItem('userAvatar', data.avatar_url);
+            const menu = document.getElementById('user-menu');
+            menu.innerHTML = `
+              <a href="/creator" class="btn-icon" title="Creator Studio"><i class="fas fa-video"></i></a>
+              <button id="btn-logout" class="glass-button">Sair</button>
+              <a href="/user/` + currentUserId + `" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+                <img src="` + data.avatar_url + `" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
+              </a>
+            `;
+          }
+          location.reload();
+        }
+      });
+      
+      document.getElementById('user-edit-form').addEventListener("submit", async e => {
+        e.preventDefault();
+        const name = document.getElementById('edit-name').value.trim();
+        const pronouns = document.getElementById('edit-pronouns').value;
+        const bio = document.getElementById('edit-bio').value.trim();
+        
+        await fetch(`${API}/users/me`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name, pronouns, bio })
+        });
+        
+        applyUserTheme(pronouns);
+        alert("Perfil atualizado!");
+        location.reload();
+      });
+      
+      function applyUserTheme(pronouns) {
+        if (!pronouns || pronouns === 'não especificado') return;
+        const colors = {
+          'ele/dele': { bg: '#1e3a5f', accent: '#3b82f6', suffix: 'o', article: 'o', possessive: 'seu' },
+          'ela/dela': { bg: '#5f1e3a', accent: '#ec4899', suffix: 'a', article: 'a', possessive: 'sua' },
+          'não especificado': { bg: '#1e3a5f', accent: '#3b82f6', suffix: 'e', article: '', possessive: 'seu' }
+        };
+        const theme = colors[pronouns];
+        if (!theme) return;
+        const styles = document.createElement('style');
+        styles.textContent = `
+          .navbar-logo, .channel-avatar { background-color: ${theme.bg} !important; }
+          .theme-accent { color: ${theme.accent} !important; }
+        `;
+        document.head.appendChild(styles);
+        localStorage.setItem('userTheme', JSON.stringify(theme));
+        localStorage.setItem('userPronouns', JSON.stringify({ suffix: theme.suffix, article: theme.article, possessive: theme.possessive }));
+        updateDynamicText();
+      }
+    }
+    
+    $("#btn-search")?.addEventListener("click", () => {
+      const q = $("#search-input").value.trim();
+      if (q) window.location.href = "/?q=" + encodeURIComponent(q);
+    });
+    
+    $("#btn-logout")?.addEventListener("click", async () => {
+      await fetch(`${API}/logout`, { method: "POST" });
+      token = null;
+      localStorage.removeItem("token");
+      window.location.href = "/auth";
+    });
+  </script>
+</body>
+</html>

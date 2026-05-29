@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entrar - PlaysTube v3.0.0</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-enter" style="min-height:100vh;display:flex;">
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:2rem;">
+    <div class="glass-card" style="width:100%;max-width:420px;padding:2.5rem;">
+      <div style="text-align:center;margin-bottom:1.5rem;">
+        <div class="navbar-logo" style="width:48px;height:48px;border-radius:14px;margin:0 auto .75rem;">
+          <i class="fas fa-play text-white"></i>
+        </div>
+        <h1 style="font-size:1.5rem;font-weight:800;">PlaysTube</h1>
+        <p style="color:var(--text-muted);font-size:.875rem;margin-top:.25rem;">Entre na sua conta</p>
+      </div>
+      
+      <div class="tabs" style="margin-bottom:1.5rem;">
+        <button id="tab-login" class="tab active" style="flex:1;text-align:center;">Entrar</button>
+        <button id="tab-register" class="tab" style="flex:1;text-align:center;">Criar Conta</button>
+      </div>
+      
+      <form id="login-form">
+        <div class="mb-4">
+          <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">E-mail</label>
+          <input type="email" id="login-email" required class="glass-input" placeholder="seu@email.com">
+        </div>
+        <div class="mb-6">
+          <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Senha</label>
+          <input type="password" id="login-password" required class="glass-input" placeholder="••••••••">
+        </div>
+        <button type="submit" class="glass-button w-full primary" style="justify-content:center;padding:.75rem;">Entrar</button>
+      </form>
+      
+      <form id="register-form" class="hidden">
+        <div class="mb-4">
+          <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Nome completo</label>
+          <input type="text" id="register-name" required class="glass-input" placeholder="João Silva">
+        </div>
+        <div class="mb-4">
+          <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">E-mail</label>
+          <input type="email" id="register-email" required class="glass-input" placeholder="seu@email.com">
+        </div>
+        <div class="mb-6">
+          <label style="display:block;font-size:.875rem;color:var(--text-secondary);margin-bottom:.5rem;">Senha</label>
+          <input type="password" id="register-password" required class="glass-input" placeholder="••••••••">
+        </div>
+        <button type="submit" class="glass-button w-full primary" style="justify-content:center;padding:.75rem;">Criar Conta</button>
+      </form>
+      
+      <div id="error-msg" class="hidden glass" style="margin-top:1rem;padding:.75rem;border-radius:10px;font-size:.875rem;color:var(--red);border-color:rgba(239,68,68,0.2);"></div>
+      
+      <p style="text-align:center;color:var(--text-muted);font-size:.75rem;margin-top:1.5rem;">
+        Ao continuar, você aceita nossos Termos de Serviço e Política de Privacidade
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const API = "http://localhost:4000/api";
+    
+    if (document.cookie.includes('token=')) {
+      window.location.href = '/';
+    }
+    
+    function $(sel) { return document.querySelector(sel); }
+    
+    function showError(msg) {
+      const el = $("#error-msg");
+      el.textContent = msg;
+      el.classList.remove("hidden");
+      setTimeout(() => el.classList.add("hidden"), 5000);
+    }
+    
+    $("#tab-login").addEventListener("click", () => {
+      $(".tab.active")?.classList.remove("active");
+      $("#tab-login").classList.add("active");
+      $("#login-form").classList.remove("hidden");
+      $("#register-form").classList.add("hidden");
+      $("#error-msg").classList.add("hidden");
+    });
+    
+    $("#tab-register").addEventListener("click", () => {
+      $(".tab.active")?.classList.remove("active");
+      $("#tab-register").classList.add("active");
+      $("#register-form").classList.remove("hidden");
+      $("#login-form").classList.add("hidden");
+      $("#error-msg").classList.add("hidden");
+    });
+    
+    $("#login-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const email = $("#login-email").value.trim();
+      const password = $("#login-password").value;
+      
+      try {
+        const resp = await fetch(`${API}/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ email, password })
+        });
+        
+        const data = await resp.json();
+        
+        if (!resp.ok) {
+          showError(data.error || "Erro ao fazer login");
+        } else {
+          window.location.href = "/";
+        }
+      } catch (err) {
+        showError("Erro de conexão");
+      }
+    });
+    
+    $("#register-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      const name = $("#register-name").value.trim();
+      const email = $("#register-email").value.trim();
+      const password = $("#register-password").value;
+      
+      try {
+        const resp = await fetch(`${API}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ name, email, password })
+        });
+        
+        const data = await resp.json();
+        
+        if (!resp.ok) {
+          showError(data.error || "Erro ao criar conta");
+        } else {
+          window.location.href = "/";
+        }
+      } catch (err) {
+        showError("Erro de conexão");
+      }
+    });
+  </script>
+</body>
+</html>
