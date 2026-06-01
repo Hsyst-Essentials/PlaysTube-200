@@ -186,7 +186,7 @@
           <div style="padding:1rem;border-top:1px solid var(--border);">
             <% if (user) { %>
             <form id="chat-form" class="flex gap-2">
-              <input type="text" id="chat-input" placeholder="Enviar mensagem..." class="glass-input" style="flex:1;">
+              <input type="text" id="chat-input" autocomplete="off" placeholder="Enviar mensagem..." class="glass-input" style="flex:1;">
               <button type="submit" class="glass-button danger" style="padding:.5rem .75rem;"><i class="fas fa-paper-plane"></i></button>
             </form>
             <% } else { %>

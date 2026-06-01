@@ -2,6 +2,7 @@
 process.noDeprecation = true;
 import express from "express";
 import cors from "cors";
+import { config } from "dotenv";
 import multer from "multer";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
@@ -19,8 +20,6 @@ import { EventEmitter } from "node:events";
 import Context from "node-media-server/src/core/context.js";
 
 const execAsync = promisify(exec);
-
-
 
 // Promise‑based wrapper for sqlite3
 function openDB(path) {
@@ -65,7 +64,14 @@ function dbExec(db, sql) {
 }
 const __dirname = path.resolve();
 
-const JWT_SECRET = "🔑‑troque‑por‑uma‑chave‑segura‑em‑produção";
+// Configure the dotenv lib
+config();
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+	console.log("Missing JWT_SECRET!");
+	process.exit(-1);
+}
 
 function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: "7d" });
