@@ -1314,7 +1314,7 @@ const result = videos.map(v => ({
   ownerId: v.owner_id,
   views: v.views,
   created_at: v.created_at,
-  previewUrl: `/static/${path.basename(v.playlist1080)}`,
+  previewUrl: v.playlist1080 ? `/static/${path.basename(v.playlist1080)}` : null,
 }));
 res.json(result);
 });
