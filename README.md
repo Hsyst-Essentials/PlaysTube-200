@@ -52,11 +52,14 @@ ffmpeg: '/opt/homebrew/bin/ffmpeg'
 
 ### 3. Configure a chave JWT
 
-Edite `index.js` e substitua `JWT_SECRET` por uma chave segura:
+Crie um arquivo na raíz chamado `.env`, e dentro dele coloque
+o seguinte codigo:
 
-```js
-const JWT_SECRET = "sua-chave-super-segura-aqui";
+```env
+JWT_SECRET="sua-senha-secreta";
 ```
+
+> Lembre-se de manter ela em segredo!
 
 ### 4. Configure a URL da API (para produção)
 
