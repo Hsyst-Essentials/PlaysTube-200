@@ -413,6 +413,9 @@ try {
 try {
   await dbRun(db, "ALTER TABLE live_streams ADD COLUMN late_notified INTEGER DEFAULT 0");
 } catch (e) { /* column already exists */ }
+try {
+  await dbRun(db, "ALTER TABLE live_streams ADD COLUMN flv_id TEXT");
+} catch (e) { /* column already exists */ }
 
 console.log('[DB] Banco de dados inicializado');
 
@@ -469,11 +472,16 @@ nms.on('prePublish', (session) => {
   dbGet(db, "SELECT id, name FROM channels WHERE stream_key = ?", streamKey).then(channel => {
     if (!channel) {
       console.log('[RTMP] Canal não encontrado:', streamKey);
-      rtmpSessions.set(sessionId, { channelId: null, channelName: 'Unknown', streamKey });
+      rtmpSessions.set(sessionId, { channelId: null, channelName: 'Unknown', streamKey, flvId: null });
       return;
     }
     console.log('[RTMP] Canal válido:', channel.name);
-    rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, time: Date.now() });
+    // Reuse existing flv_id if one was pre-generated (e.g. scheduled live)
+    dbGet(db, "SELECT flv_id FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed') AND flv_id IS NOT NULL LIMIT 1", channel.id).then(existing => {
+      const flvId = existing ? existing.flv_id : uuidv4().replace(/-/g, "").substring(0, 16);
+      session.streamName = flvId;
+      rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, flvId, time: Date.now() });
+    });
   }).catch(err => console.error('[RTMP] Erro:', err));
 });
 
@@ -489,16 +497,17 @@ nms.on('postPublish', (session) => {
   if (!sess) {
     dbGet(db, "SELECT id, name FROM channels WHERE stream_key = ?", streamKey).then(ch => {
       if (ch) {
-        sess = { channelId: ch.id, channelName: ch.name, streamKey };
+        const flvId = streamKey;
+        sess = { channelId: ch.id, channelName: ch.name, streamKey, flvId };
         rtmpSessions.set(sessionId, sess);
-        createLiveRecord(ch.id, ch.name, streamKey);
+        createLiveRecord(ch.id, ch.name, streamKey, flvId);
       }
     }).catch(err => console.error('[RTMP] Erro:', err));
     return;
   }
   
   if (sess) {
-    createLiveRecord(sess.channelId, sess.channelName, sess.streamKey);
+    createLiveRecord(sess.channelId, sess.channelName, sess.streamKey, sess.flvId);
   }
 });
 
@@ -541,7 +550,7 @@ app.use(cors({ origin: true, credentials: true }));
 
 const rtmpSessions = new Map();
 
-function createLiveRecord(channelId, channelName, streamKey) {
+function createLiveRecord(channelId, channelName, streamKey, flvId) {
   console.log(`[RTMP] Criando live para: ${channelName}`);
   
   dbGet(db, "SELECT id, status, scheduled_at FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed','live')", channelId).then(existing => {
@@ -561,13 +570,13 @@ function createLiveRecord(channelId, channelName, streamKey) {
       }
       // Update existing record to live
       console.log(`[RTMP] Atualizando live ${existing.id} para live`);
-      return dbRun(db, "UPDATE live_streams SET status = 'live', started_at = CURRENT_TIMESTAMP WHERE id = ?", existing.id);
+      return dbRun(db, "UPDATE live_streams SET status = 'live', flv_id = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?", flvId, existing.id);
     }
     const liveId = uuidv4();
     console.log(`[RTMP] INSERT live: ${liveId}`);
     return dbRun(db, 
-      "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, started_at) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)",
-      liveId, channelId, "Live", `Transmissão de ${channelName}`, "live", streamKey
+      "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, started_at) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+      liveId, channelId, "Live", `Transmissão de ${channelName}`, "live", streamKey, flvId
     );
   }).then(() => {
     console.log('[RTMP] Live registrada!');
@@ -1100,6 +1109,7 @@ app.post("/api/live", authMiddleware, async (req, res) => {
   await dbRun(db, "UPDATE live_streams SET status = 'cancelled' WHERE channel_id = ? AND status NOT IN ('ended', 'cancelled')", channelId);
 
   const streamKey = channel.stream_key || uuidv4().replace(/-/g, "");
+  const flvId = uuidv4().replace(/-/g, "").substring(0, 16);
   const liveId = uuidv4();
   let status = 'waiting';
   let scheduledAtVal = null;
@@ -1110,10 +1120,10 @@ app.post("/api/live", authMiddleware, async (req, res) => {
   }
 
   await dbRun(db,
-    "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, scheduled_at) VALUES (?,?,?,?,?,?,?)",
-    liveId, channelId, title, description || "", status, streamKey, scheduledAtVal
+    "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, scheduled_at) VALUES (?,?,?,?,?,?,?,?)",
+    liveId, channelId, title, description || "", status, streamKey, flvId, scheduledAtVal
   );
-  res.json({ liveId, streamKey, status, scheduledAt: scheduledAtVal });
+  res.json({ liveId, streamKey, flvId, status, scheduledAt: scheduledAtVal });
 });
 
 // Schedule a live (alias for POST /api/live with mode='schedule')
@@ -1127,13 +1137,14 @@ app.post("/api/channels/:id/schedule-live", authMiddleware, async (req, res) => 
   if (!title || !scheduledAt) return res.status(400).json({ error: "Título e horário obrigatórios" });
   
   const streamKey = channel.stream_key || uuidv4().replace(/-/g, "");
+  const flvId = uuidv4().replace(/-/g, "").substring(0, 16);
   const liveId = uuidv4();
   
   await dbRun(db,
-    "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, scheduled_at) VALUES (?,?,?,?,?,?,?)",
-    liveId, req.params.id, title, description || "", "scheduled", streamKey, new Date(scheduledAt).toISOString().replace('T', ' ').substring(0, 19)
+    "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, scheduled_at) VALUES (?,?,?,?,?,?,?,?)",
+    liveId, req.params.id, title, description || "", "scheduled", streamKey, flvId, new Date(scheduledAt).toISOString().replace('T', ' ').substring(0, 19)
   );
-  res.json({ liveId, streamKey, status: 'scheduled', scheduledAt });
+  res.json({ liveId, streamKey, flvId, status: 'scheduled', scheduledAt });
 });
 
 // Cancel a live
@@ -1178,6 +1189,7 @@ app.get("/api/live/:channelId/status", async (req, res) => {
     description: live.description,
     status: live.status,
     stream_key: live.stream_key,
+    flv_id: live.flv_id,
     scheduled_at: live.scheduled_at,
     delay_minutes: delayMinutes,
     is_late: isLate
@@ -1500,7 +1512,7 @@ app.get("/", async (req, res) => {
   }
 
   const lives = await dbAll(db,
-    `SELECT l.id, l.title, l.stream_key, l.status, l.scheduled_at, c.id as channel_id, c.name as channel, c.avatar_url as channel_avatar
+    `SELECT l.id, l.title, l.stream_key, l.flv_id, l.status, l.scheduled_at, c.id as channel_id, c.name as channel, c.avatar_url as channel_avatar
      FROM live_streams l
      JOIN channels c ON c.id = l.channel_id
      WHERE l.status IN ('live','waiting','delayed','scheduled','ready')
@@ -1780,7 +1792,7 @@ io.on("connection", (socket) => {
 
 httpServer.listen(PORT, () => {
   console.log(`[SERVER] Servidor rodando em http://localhost:${PORT}`);
-  console.log(`[SERVER] FLV disponível em http://localhost:8000/live/{streamKey}.flv`);
+  console.log(`[SERVER] FLV disponível em http://localhost:8000/live/{flvId}.flv`);
 });
 
 // Live state checker: runs every 15s
