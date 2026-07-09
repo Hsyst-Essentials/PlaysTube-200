@@ -202,9 +202,9 @@
 
   <script>
     const channelId = "<%= live.channel_id %>";
-    const streamKey = "<%= live.stream_key %>";
+    const flvId = "<%= live.flv_id || live.stream_key %>";
     const API = "http://localhost:4000/api";
-    const FLV_URL = "http://localhost:8000/live/" + streamKey + ".flv";
+    const FLV_URL = "http://localhost:8000/live/" + flvId + ".flv";
 
     const video = document.getElementById("live-player");
     const loading = document.getElementById("live-loading");
