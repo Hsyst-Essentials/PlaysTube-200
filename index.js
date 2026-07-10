@@ -469,18 +469,26 @@ nms.on('prePublish', (session) => {
   const sessionId = session.id;
   console.log(`[RTMP] Session: ${sessionId}, key: ${streamKey.substring(0,8)}...`);
   
+  // Generate flvId synchronously and rename immediately
+  // to prevent race condition with postPublish
+  const flvId = uuidv4().replace(/-/g, "").substring(0, 16);
+  session.streamName = flvId;
+  rtmpSessions.set(sessionId, { channelId: null, channelName: 'Unknown', streamKey, flvId, time: Date.now() });
+  
   dbGet(db, "SELECT id, name FROM channels WHERE stream_key = ?", streamKey).then(channel => {
     if (!channel) {
       console.log('[RTMP] Canal não encontrado:', streamKey);
-      rtmpSessions.set(sessionId, { channelId: null, channelName: 'Unknown', streamKey, flvId: null });
       return;
     }
     console.log('[RTMP] Canal válido:', channel.name);
     // Reuse existing flv_id if one was pre-generated (e.g. scheduled live)
     dbGet(db, "SELECT flv_id FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed') AND flv_id IS NOT NULL LIMIT 1", channel.id).then(existing => {
-      const flvId = existing ? existing.flv_id : uuidv4().replace(/-/g, "").substring(0, 16);
-      session.streamName = flvId;
-      rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, flvId, time: Date.now() });
+      const actualFlvId = existing ? existing.flv_id : flvId;
+      if (existing) {
+        session.streamName = actualFlvId;
+      }
+      rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, flvId: actualFlvId, time: Date.now() });
+      createLiveRecord(channel.id, channel.name, streamKey, actualFlvId);
     });
   }).catch(err => console.error('[RTMP] Erro:', err));
 });
@@ -493,20 +501,8 @@ nms.on('postPublish', (session) => {
   const sessionId = session.id;
   console.log('[RTMP] postPublish:', sessionId, streamKey);
   
-  let sess = rtmpSessions.get(sessionId);
-  if (!sess) {
-    dbGet(db, "SELECT id, name FROM channels WHERE stream_key = ?", streamKey).then(ch => {
-      if (ch) {
-        const flvId = streamKey;
-        sess = { channelId: ch.id, channelName: ch.name, streamKey, flvId };
-        rtmpSessions.set(sessionId, sess);
-        createLiveRecord(ch.id, ch.name, streamKey, flvId);
-      }
-    }).catch(err => console.error('[RTMP] Erro:', err));
-    return;
-  }
-  
-  if (sess) {
+  const sess = rtmpSessions.get(sessionId);
+  if (sess && sess.channelId) {
     createLiveRecord(sess.channelId, sess.channelName, sess.streamKey, sess.flvId);
   }
 });
