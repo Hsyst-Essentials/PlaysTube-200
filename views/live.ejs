@@ -224,7 +224,7 @@
     });
     volumeBtn.addEventListener("click", () => {
       if (video.muted) { video.muted = false; volumeBtn.innerHTML = '<i class="fas fa-volume-up"></i>'; volumeSlider.value = video.volume * 100; }
-      else { video.muted = true; volumeBtn.innerHTML = '<i class="fas fa-volume-mute"></i>'; volumeSlider.value = 0; }
+      else { video.muted = false; volumeBtn.innerHTML = '<i class="fas fa-volume-mute"></i>'; volumeSlider.value = 0; }
     });
     video.addEventListener("volumechange", () => { volumeSlider.value = video.muted ? 0 : video.volume * 100; });
     volumeSlider.addEventListener("input", (e) => { video.volume = e.target.value / 100; });
@@ -236,7 +236,7 @@
     if (flvjs.isSupported()) {
       var player = flvjs.createPlayer({ type: 'flv', url: FLV_URL, isLive: true }, { enableWorker: false, lazyLoad: false });
       player.attachMediaElement(video);
-      video.muted = true;
+      video.muted = false;
       player.load();
       player.play().catch(() => {});
       player.on(flvjs.Events.ERROR, function(errorType, errorInfo) { console.error("[FLV] Player error:", errorType, errorInfo); player.unload(); loading.innerHTML = '<div class="text-white">Erro ao carregar transmissão</div>'; });
