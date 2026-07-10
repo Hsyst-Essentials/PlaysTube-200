@@ -13,7 +13,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import sqlite3 from "sqlite3";
 import cookieParser from "cookie-parser";
-import { createServer } from "http";
+import http from "http";
 import { Server } from "socket.io";
 import NodeMediaServer from "node-media-server";
 import { EventEmitter } from "node:events";
@@ -469,11 +469,7 @@ nms.on('prePublish', (session) => {
   const sessionId = session.id;
   console.log(`[RTMP] Session: ${sessionId}, key: ${streamKey.substring(0,8)}...`);
   
-  // Generate flvId synchronously and rename immediately
-  // to prevent race condition with postPublish
-  const flvId = uuidv4().replace(/-/g, "").substring(0, 16);
-  session.streamName = flvId;
-  rtmpSessions.set(sessionId, { channelId: null, channelName: 'Unknown', streamKey, flvId, time: Date.now() });
+  rtmpSessions.set(sessionId, { channelId: null, channelName: 'Unknown', streamKey, flvId: null, time: Date.now() });
   
   dbGet(db, "SELECT id, name FROM channels WHERE stream_key = ?", streamKey).then(channel => {
     if (!channel) {
@@ -483,12 +479,9 @@ nms.on('prePublish', (session) => {
     console.log('[RTMP] Canal válido:', channel.name);
     // Reuse existing flv_id if one was pre-generated (e.g. scheduled live)
     dbGet(db, "SELECT flv_id FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed') AND flv_id IS NOT NULL LIMIT 1", channel.id).then(existing => {
-      const actualFlvId = existing ? existing.flv_id : flvId;
-      if (existing) {
-        session.streamName = actualFlvId;
-      }
-      rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, flvId: actualFlvId, time: Date.now() });
-      createLiveRecord(channel.id, channel.name, streamKey, actualFlvId);
+      const flvId = existing ? existing.flv_id : uuidv4().replace(/-/g, "").substring(0, 16);
+      rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, flvId, time: Date.now() });
+      createLiveRecord(channel.id, channel.name, streamKey, flvId);
     });
   }).catch(err => console.error('[RTMP] Erro:', err));
 });
@@ -511,7 +504,12 @@ nms.on('donePublish', (session) => {
   const sessionId = session.id;
   const sess = rtmpSessions.get(sessionId);
   if (sess) {
-    console.log('[RTMP] donePublish:', sess.channelName);
+    console.log('[RTMP] donePublish:', sess.channelName, sess.streamKey);
+    if (!sess.channelId) {
+      console.warn('[RTMP] donePublish sem channelId, removendo sessão');
+      rtmpSessions.delete(sessionId);
+      return;
+    }
     // If streamer disconnected before scheduled time, go back to 'scheduled'
     dbRun(db, "UPDATE live_streams SET status = 'scheduled' WHERE channel_id = ? AND status = 'ready'", sess.channelId)
       .then(() => {
@@ -552,19 +550,9 @@ function createLiveRecord(channelId, channelName, streamKey, flvId) {
   dbGet(db, "SELECT id, status, scheduled_at FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed','live')", channelId).then(existing => {
     if (existing) {
       if (existing.status === 'live') {
-        console.log('[RTMP] Live já está ativa');
-        return;
+        console.log(`[RTMP] Live já ativa, atualizando flv_id (${existing.id})`);
+        return dbRun(db, "UPDATE live_streams SET flv_id = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?", flvId, existing.id);
       }
-      if (existing.status === 'scheduled' || existing.status === 'ready') {
-        const scheduled = existing.scheduled_at ? new Date(existing.scheduled_at.replace(' ', 'T') + 'Z') : null;
-        const now = new Date();
-        if (scheduled && scheduled > now) {
-          // Streamer connected early — mark as ready, don't start player yet
-          console.log(`[RTMP] Live agendada, conectou adiantado. Status: ready (${existing.id})`);
-          return dbRun(db, "UPDATE live_streams SET status = 'ready' WHERE id = ?", existing.id);
-        }
-      }
-      // Update existing record to live
       console.log(`[RTMP] Atualizando live ${existing.id} para live`);
       return dbRun(db, "UPDATE live_streams SET status = 'live', flv_id = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?", flvId, existing.id);
     }
@@ -1276,6 +1264,24 @@ app.post("/api/webhook/live-end", async (req, res) => {
   res.json({ ok: true });
 });
 
+// Proxy FLV: maps flv_id -> stream_key (NMS nunca é consultado com nome errado)
+app.get("/api/flv/:flvId.flv", async (req, res) => {
+  try {
+    const live = await dbGet(db,
+      "SELECT stream_key FROM live_streams WHERE flv_id = ? AND status = 'live'",
+      req.params.flvId
+    );
+    if (!live) return res.status(404).end();
+    const url = `http://localhost:${HTTP_PORT}/live/${live.stream_key}.flv`;
+    http.get(url, (proxyRes) => {
+      if (!proxyRes.statusCode || proxyRes.statusCode >= 400)
+        return res.status(proxyRes.statusCode || 502).end();
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    }).on("error", () => { if (!res.headersSent) res.status(502).end(); });
+  } catch { res.status(500).end(); }
+});
+
 // Recommendation: videos based on tags (public endpoint)
 app.get("/api/recommendations", async (req, res) => {
 const exId = req.query.exclude;
@@ -1729,7 +1735,7 @@ app.get("/creator", async (req, res) => {
 });
 
 // Socket.IO setup
-const httpServer = createServer(app);
+const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
