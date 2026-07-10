@@ -202,9 +202,9 @@
 
   <script>
     const channelId = "<%= live.channel_id %>";
-    const flvId = "<%= live.flv_id || live.stream_key %>";
     const API = "http://localhost:4000/api";
-    const FLV_URL = "http://localhost:8000/live/" + flvId + ".flv";
+    const flvId = "<%= live.flv_id || live.stream_key %>";
+    const FLV_URL = API + "/flv/" + flvId + ".flv";
 
     const video = document.getElementById("live-player");
     const loading = document.getElementById("live-loading");
@@ -215,11 +215,11 @@
     const centerPlayBtn = document.getElementById("center-play-btn");
 
     centerPlayBtn.addEventListener("click", async () => {
-      try { await video.play(); centerPlayBtn.style.display = 'none'; loading.style.display = 'none'; }
+      try { await player.play(); centerPlayBtn.style.display = 'none'; loading.style.display = 'none'; }
       catch(e) { console.log("Play click error:", e); }
     });
     playPauseBtn.addEventListener("click", () => {
-      if (video.paused) { video.play(); playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>'; }
+      if (video.paused) { player.play(); playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>'; }
       else { video.pause(); playPauseBtn.innerHTML = '<i class="fas fa-play"></i>'; }
     });
     volumeBtn.addEventListener("click", () => {
@@ -234,12 +234,12 @@
     });
 
     if (flvjs.isSupported()) {
-      var player = flvjs.createPlayer({ type: 'flv', url: FLV_URL }, { lazyLoad: true, seekType: 'range' });
+      var player = flvjs.createPlayer({ type: 'flv', url: FLV_URL, isLive: true }, { enableWorker: false, lazyLoad: false });
       player.attachMediaElement(video);
       video.muted = true;
       player.load();
-      setTimeout(() => { video.muted = false; player.play(); }, 1000);
-      player.onError = function(err) { console.error("[FLV] Player error:", err); loading.innerHTML = '<div class="text-white">Erro: ' + err + '</div>'; };
+      player.play().catch(() => {});
+      player.on(flvjs.Events.ERROR, function(errorType, errorInfo) { console.error("[FLV] Player error:", errorType, errorInfo); player.unload(); loading.innerHTML = '<div class="text-white">Erro ao carregar transmissão</div>'; });
       video.onplaying = function() { loading.style.display = 'none'; };
       video.oncanplay = function() { loading.style.display = 'none'; };
       video.onloadeddata = function() { loading.style.display = 'none'; };
