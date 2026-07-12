@@ -471,17 +471,19 @@ nms.on('prePublish', (session) => {
   
   rtmpSessions.set(sessionId, { channelId: null, channelName: 'Unknown', streamKey, flvId: null, time: Date.now() });
   
-  dbGet(db, "SELECT id, name FROM channels WHERE stream_key = ?", streamKey).then(channel => {
+   dbGet(db, "SELECT id, name FROM channels WHERE stream_key = ?", streamKey).then(async channel => {
     if (!channel) {
       console.log('[RTMP] Canal não encontrado:', streamKey);
       return;
     }
     console.log('[RTMP] Canal válido:', channel.name);
+    const ver = (channelVersions.get(channel.id) || 0) + 1;
+    channelVersions.set(channel.id, ver);
     // Reuse existing flv_id if one was pre-generated (e.g. scheduled live)
-    dbGet(db, "SELECT flv_id FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed') AND flv_id IS NOT NULL LIMIT 1", channel.id).then(existing => {
+    dbGet(db, "SELECT flv_id FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed') AND flv_id IS NOT NULL LIMIT 1", channel.id).then(async existing => {
       const flvId = existing ? existing.flv_id : uuidv4().replace(/-/g, "").substring(0, 16);
-      rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, flvId, time: Date.now() });
-      createLiveRecord(channel.id, channel.name, streamKey, flvId);
+      const liveId = await createLiveRecord(channel.id, channel.name, streamKey, flvId);
+      rtmpSessions.set(sessionId, { channelId: channel.id, channelName: channel.name, streamKey, flvId, liveId, channelVer: ver, time: Date.now() });
     });
   }).catch(err => console.error('[RTMP] Erro:', err));
 });
@@ -496,7 +498,11 @@ nms.on('postPublish', (session) => {
   
   const sess = rtmpSessions.get(sessionId);
   if (sess && sess.channelId) {
-    createLiveRecord(sess.channelId, sess.channelName, sess.streamKey, sess.flvId);
+    createLiveRecord(sess.channelId, sess.channelName, sess.streamKey, sess.flvId).then(liveId => {
+      if (liveId) {
+        rtmpSessions.set(sessionId, { ...sess, liveId });
+      }
+    });
   }
 });
 
@@ -510,9 +516,19 @@ nms.on('donePublish', (session) => {
       rtmpSessions.delete(sessionId);
       return;
     }
+    // Check if a newer session started for this channel (reconnect)
+    const currentVer = channelVersions.get(sess.channelId) || 0;
+    if (sess.channelVer !== undefined && sess.channelVer < currentVer) {
+      console.log('[RTMP] Nova sessão detectada para o canal, não finalizando live');
+      rtmpSessions.delete(sessionId);
+      return;
+    }
     // If streamer disconnected before scheduled time, go back to 'scheduled'
     dbRun(db, "UPDATE live_streams SET status = 'scheduled' WHERE channel_id = ? AND status = 'ready'", sess.channelId)
       .then(() => {
+        if (sess.liveId) {
+          return dbRun(db, "UPDATE live_streams SET status = 'ended', ended_at = datetime('now') WHERE id = ? AND status IN ('live','waiting','delayed')", sess.liveId);
+        }
         return dbRun(db, "UPDATE live_streams SET status = 'ended', ended_at = datetime('now') WHERE channel_id = ? AND status IN ('live','waiting','delayed')", sess.channelId);
       })
       .then(() => rtmpSessions.delete(sessionId))
@@ -543,28 +559,35 @@ app.use(cookieParser());
 app.use(cors({ origin: true, credentials: true }));
 
 const rtmpSessions = new Map();
+const channelVersions = new Map(); // channelId -> version counter (increments on each new publish session)
 
-function createLiveRecord(channelId, channelName, streamKey, flvId) {
+async function createLiveRecord(channelId, channelName, streamKey, flvId) {
   console.log(`[RTMP] Criando live para: ${channelName}`);
-  
-  dbGet(db, "SELECT id, status, scheduled_at FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed','live')", channelId).then(existing => {
+  try {
+    const existing = await dbGet(db, "SELECT id, status, scheduled_at FROM live_streams WHERE channel_id = ? AND status IN ('waiting','scheduled','ready','delayed','live')", channelId);
     if (existing) {
       if (existing.status === 'live') {
         console.log(`[RTMP] Live já ativa, atualizando flv_id (${existing.id})`);
-        return dbRun(db, "UPDATE live_streams SET flv_id = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?", flvId, existing.id);
+        await dbRun(db, "UPDATE live_streams SET flv_id = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?", flvId, existing.id);
+      } else {
+        console.log(`[RTMP] Atualizando live ${existing.id} para live`);
+        await dbRun(db, "UPDATE live_streams SET status = 'live', flv_id = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?", flvId, existing.id);
       }
-      console.log(`[RTMP] Atualizando live ${existing.id} para live`);
-      return dbRun(db, "UPDATE live_streams SET status = 'live', flv_id = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?", flvId, existing.id);
+      console.log('[RTMP] Live registrada!');
+      return existing.id;
     }
     const liveId = uuidv4();
     console.log(`[RTMP] INSERT live: ${liveId}`);
-    return dbRun(db, 
+    await dbRun(db, 
       "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, started_at) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)",
       liveId, channelId, "Live", `Transmissão de ${channelName}`, "live", streamKey, flvId
     );
-  }).then(() => {
     console.log('[RTMP] Live registrada!');
-  }).catch(err => console.error('[RTMP] Erro ao criar live:', err));
+    return liveId;
+  } catch (err) {
+    console.error('[RTMP] Erro ao criar live:', err);
+    return null;
+  }
 }
 
 // API endpoint to get active RTMP sessions
