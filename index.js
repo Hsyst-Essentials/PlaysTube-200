@@ -94,7 +94,11 @@ function signToken(user) {
 
 function sanitizeText(str) {
   if (typeof str !== 'string') return '';
-  return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, 5000);
+  return str
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/[<>]/g, '')
+    .trim()
+    .slice(0, 5000);
 }
 
 function isSafeUrl(url) {
@@ -108,6 +112,57 @@ function isSafeUrl(url) {
     return false;
   }
 }
+
+// Rate limiting leve e sem dependências (brute force / enumeração de contas — F6.2)
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+const RATE_MAX_PER_IP = 20;
+const RATE_FAILED_LOGINS_PER_ACCOUNT = 5;
+const rateBuckets = new Map(); // ip -> { count, resetAt }
+const loginFailures = new Map(); // email -> { count, resetAt }
+
+function rateLimitByIp(req, res, next) {
+  const key = req.ip || 'unknown';
+  const now = Date.now();
+  let b = rateBuckets.get(key);
+  if (!b || b.resetAt <= now) { b = { count: 0, resetAt: now + RATE_WINDOW_MS }; rateBuckets.set(key, b); }
+  b.count++;
+  if (b.count > RATE_MAX_PER_IP) {
+    res.set('Retry-After', String(Math.ceil((b.resetAt - now) / 1000)));
+    return res.status(429).json({ error: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+  }
+  next();
+}
+
+function loginLockout(req, res, next) {
+  const email = (req.body?.email || '').trim().toLowerCase();
+  if (!email) return next();
+  const fa = loginFailures.get(email);
+  const now = Date.now();
+  if (fa && fa.resetAt > now && fa.count >= RATE_FAILED_LOGINS_PER_ACCOUNT) {
+    res.set('Retry-After', String(Math.ceil((fa.resetAt - now) / 1000)));
+    return res.status(429).json({ error: 'Muitas tentativas para esta conta. Tente novamente mais tarde.' });
+  }
+  next();
+}
+
+function registerLoginFailure(email) {
+  const key = (email || '').trim().toLowerCase();
+  if (!key) return;
+  const now = Date.now();
+  const fa = loginFailures.get(key);
+  if (!fa || fa.resetAt <= now) { loginFailures.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS }); }
+  else { fa.count++; }
+}
+
+function clearLoginFailures(email) {
+  loginFailures.delete((email || '').trim().toLowerCase());
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, b] of rateBuckets) if (b.resetAt <= now) rateBuckets.delete(k);
+  for (const [k, fa] of loginFailures) if (fa.resetAt <= now) loginFailures.delete(k);
+}, 60 * 1000).unref();
 
 function authMiddleware(req, res, next) {
   let token = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : req.cookies?.token;
@@ -584,7 +639,7 @@ nms.on('error', (err) => {
 const app = express();
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 const CORS_ORIGINS = new Set((process.env.CORS_ORIGINS || 'http://localhost:4000,http://127.0.0.1:4000')
   .split(',').map(s => s.trim()).filter(Boolean));
@@ -642,7 +697,7 @@ app.get("/api/rtmp/sessions", authMiddleware, (req, res) => {
 // Start the RTMP server
 nms.run();
 
-app.post("/api/register", async (req, res) => {
+app.post("/api/register", rateLimitByIp, async (req, res) => {
   const { name, email, password } = req.body;
   const cleanName = sanitizeText(name);
   if (!cleanName || !email || !password) return res.status(400).json({ error: "Campos obrigatórios" });
@@ -656,12 +711,14 @@ app.post("/api/register", async (req, res) => {
   res.json({ user: { id, name: cleanName, email } });
 });
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", rateLimitByIp, loginLockout, async (req, res) => {
   const { email, password } = req.body;
   const user = await dbGet(db, "SELECT * FROM users WHERE email = ?", email);
-  if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
-  const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
+  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    registerLoginFailure(email);
+    return res.status(401).json({ error: "Credenciais inválidas" });
+  }
+  clearLoginFailures(email);
   const token = signToken(user);
   res.cookie("token", token, { maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: "lax" });
   res.json({ user: { id: user.id, name: user.name, email: user.email } });
@@ -1916,24 +1973,31 @@ io.on("connection", (socket) => {
     const cleanText = sanitizeText(message);
     if (!cleanText) return socket.emit('error', 'Texto obrigatório');
     const author = sanitizeText(socket.user.name) || 'Anonymous';
-    const msgData = {
-      id: uuidv4(),
-      username: author,
-      author,
-      message: cleanText,
-      text: cleanText,
-      timestamp: new Date().toISOString()
-    };
-    // Persist message
-    await dbRun(db,
-      "INSERT INTO live_chat_messages (id, channel_id, author, text) VALUES (?,?,?,?)",
-      msgData.id, channelId, author, cleanText
-    );
-    // Keep in‑memory cache (optional)
-    if (!liveChats[channelId]) liveChats[channelId] = [];
-    liveChats[channelId].push(msgData);
-    if (liveChats[channelId].length > 200) liveChats[channelId].shift();
-    io.to(`live-${channelId}`).emit("new-message", msgData);
+    try {
+      const channelExists = await dbGet(db, 'SELECT id FROM channels WHERE id = ?', channelId);
+      if (!channelExists) return socket.emit('error', 'Canal não encontrado');
+      const msgData = {
+        id: uuidv4(),
+        username: author,
+        author,
+        message: cleanText,
+        text: cleanText,
+        timestamp: new Date().toISOString()
+      };
+      // Persist message
+      await dbRun(db,
+        "INSERT INTO live_chat_messages (id, channel_id, author, text) VALUES (?,?,?,?)",
+        msgData.id, channelId, author, cleanText
+      );
+      // Keep in‑memory cache (optional)
+      if (!liveChats[channelId]) liveChats[channelId] = [];
+      liveChats[channelId].push(msgData);
+      if (liveChats[channelId].length > 200) liveChats[channelId].shift();
+      io.to(`live-${channelId}`).emit("new-message", msgData);
+    } catch (err) {
+      console.error('[SOCKET] send-message falhou:', err?.message || err);
+      socket.emit('error', 'Erro ao enviar mensagem');
+    }
   });
   
   socket.on("disconnect", () => {
