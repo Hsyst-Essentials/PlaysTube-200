@@ -67,10 +67,25 @@ const __dirname = path.resolve();
 // Configure the dotenv lib
 config();
 
+process.on("unhandledRejection", (reason) => {
+  console.error("[UNHANDLED REJECTION]", reason);
+});
+
 const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-	console.log("Missing JWT_SECRET!");
-	process.exit(-1);
+const KNOWN_WEAK_SECRETS = new Set([
+  "sua-senha-secreta",
+  "troque-por-uma-chave-segura-em-producao",
+  "change-me",
+  "changeme",
+  "secreto",
+  "secret",
+  "password",
+  "default",
+]);
+if (!JWT_SECRET || JWT_SECRET.length < 32 || KNOWN_WEAK_SECRETS.has(JWT_SECRET.toLowerCase())) {
+  console.error("JWT_SECRET ausente, muito curto (< 32 caracteres) ou é um valor conhecido/de exemplo.");
+  console.error("Gere uma chave robusta com: openssl rand -hex 32");
+  process.exit(-1);
 }
 
 function signToken(user) {
@@ -571,9 +586,16 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use("/static", express.static(UPLOAD_ROOT));
+const CORS_ORIGINS = new Set((process.env.CORS_ORIGINS || 'http://localhost:4000,http://127.0.0.1:4000')
+  .split(',').map(s => s.trim()).filter(Boolean));
+app.use("/static", express.static(UPLOAD_ROOT, {
+  setHeaders: (res) => res.setHeader("X-Content-Type-Options", "nosniff")
+}));
 app.use(cookieParser());
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: (origin, cb) => cb(null, !origin || CORS_ORIGINS.has(origin)),
+  credentials: true
+}));
 
 const rtmpSessions = new Map();
 const channelVersions = new Map(); // channelId -> version counter (increments on each new publish session)
@@ -607,11 +629,12 @@ async function createLiveRecord(channelId, channelName, streamKey, flvId) {
   }
 }
 
-// API endpoint to get active RTMP sessions
-app.get("/api/rtmp/sessions", (req, res) => {
+// API endpoint to get active RTMP sessions (operador/logado; nunca expõe stream_key)
+app.get("/api/rtmp/sessions", authMiddleware, (req, res) => {
   const sessions = [];
   for (const [id, session] of rtmpSessions) {
-    sessions.push({ id, ...session });
+    const { streamKey, ...safeSession } = session;
+    sessions.push({ id, ...safeSession });
   }
   res.json({ sessions, count: sessions.length });
 });
@@ -640,7 +663,6 @@ app.post("/api/login", async (req, res) => {
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
   const token = signToken(user);
-  console.log("Login success, setting cookie for user:", user.email);
   res.cookie("token", token, { maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: "lax" });
   res.json({ user: { id: user.id, name: user.name, email: user.email } });
 });
@@ -669,7 +691,11 @@ app.post("/api/channels", authMiddleware, async (req, res) => {
 });
 
 app.get("/api/channels/:id", async (req, res) => {
-  const channel = await dbGet(db, "SELECT c.*, (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count FROM channels c WHERE c.id = ?", req.params.id);
+  const channel = await dbGet(db,
+    `SELECT c.id, c.owner_id, c.name, c.description, c.pronouns, c.banner_url, c.avatar_url, c.created_at,
+            (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count
+     FROM channels c WHERE c.id = ?`,
+    req.params.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   res.json(channel);
 });
@@ -707,7 +733,9 @@ app.patch("/api/channels/:id", authMiddleware, async (req, res) => {
   if (pronouns !== undefined) await dbRun(db, "UPDATE channels SET pronouns = ? WHERE id = ?", sanitizeText(pronouns), req.params.id);
   if (banner_url) await dbRun(db, "UPDATE channels SET banner_url = ? WHERE id = ?", banner_url, req.params.id);
   if (avatar_url) await dbRun(db, "UPDATE channels SET avatar_url = ? WHERE id = ?", avatar_url, req.params.id);
-  const updated = await dbGet(db, "SELECT * FROM channels WHERE id = ?", req.params.id);
+  const updated = await dbGet(db,
+    "SELECT id, owner_id, name, description, pronouns, banner_url, avatar_url, created_at FROM channels WHERE id = ?",
+    req.params.id);
   res.json(updated);
 });
 
@@ -770,7 +798,15 @@ app.get("/api/creator/stats", authMiddleware, async (req, res) => {
   res.json(stats);
 });
 
-// Multer setup
+// Multer setup (validação de tipo/limite; extensão derivada do MIME, nunca do nome enviado pelo cliente)
+const ALLOWED_VIDEO_MIME = ['video/mp4','video/webm','video/quicktime','video/x-matroska','video/x-msvideo','video/mpeg','video/x-ms-wmv','video/3gpp','video/mp2t'];
+const ALLOWED_IMAGE_MIME = ['image/png','image/jpeg','image/gif','image/webp'];
+const EXT_BY_MIME = {
+  'video/mp4':'.mp4','video/webm':'.webm','video/quicktime':'.mov','video/x-matroska':'.mkv',
+  'video/x-msvideo':'.avi','video/mpeg':'.mpg','video/x-ms-wmv':'.wmv','video/3gpp':'.3gp','video/mp2t':'.ts',
+  'image/png':'.png','image/jpeg':'.jpg','image/gif':'.gif','image/webp':'.webp'
+};
+
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const dir = path.join(UPLOAD_ROOT, "raw");
@@ -778,14 +814,32 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
+    const ext = EXT_BY_MIME[file.mimetype] || '';
     cb(null, `${uuidv4()}${ext}`);
   },
 });
 
-const upload = multer({ storage });
+function rejectType(file, allowed) {
+  if (!allowed.includes(file.mimetype)) {
+    const err = new Error('Tipo de arquivo não permitido (vídeos: MP4/WebM/MOV/MKV/AVI; imagens: PNG/JPEG/GIF/WebP)');
+    err.statusCode = 400;
+    return err;
+  }
+  return null;
+}
 
-app.post("/api/videos", authMiddleware, upload.single("video"), async (req, res) => {
+const uploadVideo = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(rejectType(file, ALLOWED_VIDEO_MIME)),
+});
+const uploadImage = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(rejectType(file, ALLOWED_IMAGE_MIME)),
+});
+
+app.post("/api/videos", authMiddleware, uploadVideo.single("video"), async (req, res) => {
   const { channelId, title, description } = req.body;
   if (!channelId || !req.file) return res.status(400).json({ error: "Canal e arquivo obrigatórios" });
   const channel = await dbGet(db, "SELECT id, owner_id FROM channels WHERE id = ?", channelId);
@@ -795,8 +849,8 @@ app.post("/api/videos", authMiddleware, upload.single("video"), async (req, res)
   const outputBase = path.join(UPLOAD_ROOT, videoId);
   await fs.mkdir(outputBase, { recursive: true });
 
-  const videoTitle = title && title.trim() ? title.trim() : req.file.originalname;
-  const videoDesc = description && description.trim() ? description.trim() : "";
+  const videoTitle = sanitizeText(title && title.trim() ? title.trim() : req.file.originalname) || "Untitled";
+  const videoDesc = sanitizeText(description && description.trim() ? description.trim() : "");
 
   // === SINGLE HLS: remux source into HLS with stream copy (zero CPU) ===
   const outDir = path.join(outputBase, 'source');
@@ -1011,6 +1065,8 @@ app.post("/api/videos/:id/comments", authMiddleware, async (req, res) => {
   const { text } = req.body;
   const cleanText = sanitizeText(text);
   if (!cleanText) return res.status(400).json({ error: "Texto obrigatório" });
+  const videoExists = await dbGet(db, "SELECT id FROM videos WHERE id = ?", req.params.id);
+  if (!videoExists) return res.status(404).json({ error: "Vídeo não encontrado" });
   const commentId = uuidv4();
   await dbRun(db, 
     "INSERT INTO comments (id, video_id, author_id, text) VALUES (?,?,?,?)",
@@ -1107,6 +1163,8 @@ app.post('/api/live/:channelId/chat', authMiddleware, async (req, res) => {
   const { text } = req.body;
   const cleanText = sanitizeText(text);
   if (!cleanText) return res.status(400).json({ error: 'Texto obrigatório' });
+  const channelExists = await dbGet(db, 'SELECT id FROM channels WHERE id = ?', channelId);
+  if (!channelExists) return res.status(404).json({ error: 'Canal não encontrado' });
   const user = await dbGet(db, 'SELECT name FROM users WHERE id = ?', req.user.id);
   const author = sanitizeText(user?.name) || 'Anonymous';
   const id = uuidv4();
@@ -1194,7 +1252,8 @@ app.post("/api/live/:id/cancel", authMiddleware, async (req, res) => {
 // Get live status with timing info
 app.get("/api/live/:channelId/status", async (req, res) => {
   const live = await dbGet(db,
-    `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar
+    `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.ended_at, l.viewer_count,
+            c.name as channel_name, c.avatar_url as channel_avatar
      FROM live_streams l
      JOIN channels c ON c.id = l.channel_id
      WHERE l.channel_id = ? AND l.status IN ('scheduled','ready','waiting','live','delayed')`,
@@ -1221,7 +1280,6 @@ app.get("/api/live/:channelId/status", async (req, res) => {
     title: live.title,
     description: live.description,
     status: live.status,
-    stream_key: live.stream_key,
     flv_id: live.flv_id,
     scheduled_at: live.scheduled_at,
     delay_minutes: delayMinutes,
@@ -1230,13 +1288,17 @@ app.get("/api/live/:channelId/status", async (req, res) => {
 });
 
 app.get("/api/live/:id", async (req, res) => {
-  const live = await dbGet(db, "SELECT * FROM live_streams WHERE id = ?", req.params.id);
+  const live = await dbGet(db,
+    "SELECT id, channel_id, title, description, status, flv_id, scheduled_at, started_at, ended_at, viewer_count FROM live_streams WHERE id = ?",
+    req.params.id);
   if (!live) return res.status(404).json({ error: "Live não encontrada" });
   res.json(live);
 });
 
 app.get("/api/channels/:id/live", async (req, res) => {
-  const live = await dbGet(db, "SELECT * FROM live_streams WHERE channel_id = ? AND status IN ('scheduled','ready','waiting','live','delayed') ORDER BY rowid DESC", req.params.id);
+  const live = await dbGet(db,
+    "SELECT id, channel_id, title, status, flv_id, scheduled_at, started_at, ended_at FROM live_streams WHERE channel_id = ? AND status IN ('scheduled','ready','waiting','live','delayed') ORDER BY rowid DESC",
+    req.params.id);
   res.json(live || null);
 });
 
@@ -1251,14 +1313,15 @@ app.delete("/api/live/:id", authMiddleware, async (req, res) => {
 });
 
 app.get("/api/live/:id/viewers", async (req, res) => {
-  const live = await dbGet(db, "SELECT * FROM live_streams WHERE id = ? OR channel_id = ?", req.params.id, req.params.id);
+  const live = await dbGet(db, "SELECT viewer_count, channel_id FROM live_streams WHERE id = ? OR channel_id = ?", req.params.id, req.params.id);
   if (!live) return res.json({ count: 0 });
   res.json({ count: live.viewer_count || 1 });
 });
 
 app.get("/api/live", async (req, res) => {
   const lives = await dbAll(db,
-    `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar
+    `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.viewer_count,
+            c.name as channel_name, c.avatar_url as channel_avatar
      FROM live_streams l
      JOIN channels c ON c.id = l.channel_id
      WHERE l.status IN ('live','waiting','delayed','scheduled','ready')
@@ -1289,7 +1352,7 @@ app.post("/api/webhook/live-start", async (req, res) => {
     "INSERT INTO live_streams (id, channel_id, title, description, status, started_at) VALUES (?,?,?,?,?,datetime('now'))",
     liveId,
     channelId,
-    title || "Live",
+    sanitizeText(title) || "Live",
     "Transmissão ao vivo"
   );
   
@@ -1388,7 +1451,9 @@ const result = videos.map(v => ({
 res.json(result);
 });
 
-app.use("/static", express.static(UPLOAD_ROOT));
+app.use("/static", express.static(UPLOAD_ROOT, {
+  setHeaders: (res) => res.setHeader("X-Content-Type-Options", "nosniff")
+}));
 
 // IMPORTANT: /api/users/me must come BEFORE /api/users/:id
 app.get("/api/users/me", authMiddleware, async (req, res) => {
@@ -1397,7 +1462,7 @@ app.get("/api/users/me", authMiddleware, async (req, res) => {
 });
 
 app.get("/api/users/:id", async (req, res) => {
-  const user = await dbGet(db, "SELECT id, name, email FROM users WHERE id = ?", req.params.id);
+  const user = await dbGet(db, "SELECT id, name, bio, pronouns, avatar_url FROM users WHERE id = ?", req.params.id);
   if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
   res.json(user);
 });
@@ -1407,6 +1472,8 @@ app.post("/api/videos/:id/like", authMiddleware, async (req, res) => {
   if (!type || !["like", "dislike"].includes(type)) {
     return res.status(400).json({ error: "Tipo inválido" });
   }
+  const videoExists = await dbGet(db, "SELECT id FROM videos WHERE id = ?", req.params.id);
+  if (!videoExists) return res.status(404).json({ error: "Vídeo não encontrado" });
   await dbRun(db,
     "INSERT OR REPLACE INTO video_likes (user_id, video_id, type) VALUES (?,?,?)",
     req.user.id, req.params.id, type
@@ -1457,9 +1524,9 @@ app.patch("/api/users/me", authMiddleware, async (req, res) => {
 });
 
 // Upload user avatar
-app.post("/api/users/me/avatar", authMiddleware, upload.single("avatar"), async (req, res) => {
+app.post("/api/users/me/avatar", authMiddleware, uploadImage.single("avatar"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Arquivo obrigatório" });
-  const ext = path.extname(req.file.originalname);
+  const ext = EXT_BY_MIME[req.file.mimetype] || '';
   const filename = `avatar_${req.user.id}${ext}`;
   const dest = path.join(__dirname, "uploads", "avatars", filename);
   await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -1470,11 +1537,11 @@ app.post("/api/users/me/avatar", authMiddleware, upload.single("avatar"), async 
 });
 
 // Upload channel avatar/banner
-app.post("/api/channels/:id/avatar", authMiddleware, upload.single("avatar"), async (req, res) => {
+app.post("/api/channels/:id/avatar", authMiddleware, uploadImage.single("avatar"), async (req, res) => {
   const channel = await dbGet(db, "SELECT id FROM channels WHERE id = ? AND owner_id = ?", req.params.id, req.user.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   if (!req.file) return res.status(400).json({ error: "Arquivo obrigatório" });
-  const ext = path.extname(req.file.originalname);
+  const ext = EXT_BY_MIME[req.file.mimetype] || '';
   const filename = `channel_${req.params.id}_avatar${ext}`;
   const dest = path.join(__dirname, "uploads", "channels", filename);
   await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -1484,11 +1551,11 @@ app.post("/api/channels/:id/avatar", authMiddleware, upload.single("avatar"), as
   res.json({ avatar_url: avatarUrl });
 });
 
-app.post("/api/channels/:id/banner", authMiddleware, upload.single("banner"), async (req, res) => {
+app.post("/api/channels/:id/banner", authMiddleware, uploadImage.single("banner"), async (req, res) => {
   const channel = await dbGet(db, "SELECT id FROM channels WHERE id = ? AND owner_id = ?", req.params.id, req.user.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   if (!req.file) return res.status(400).json({ error: "Arquivo obrigatório" });
-  const ext = path.extname(req.file.originalname);
+  const ext = EXT_BY_MIME[req.file.mimetype] || '';
   const filename = `channel_${req.params.id}_banner${ext}`;
   const dest = path.join(__dirname, "uploads", "channels", filename);
   await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -1500,18 +1567,14 @@ app.post("/api/channels/:id/banner", authMiddleware, upload.single("banner"), as
 
 // Page routes - always render without user, let client handle auth
 function getUserFromReq(req) {
-  // For API calls, check header, query, or cookie
+  // For API calls, check header or cookie (nunca query string, para evitar vazamento por Referer/histórico)
   let token = req.headers.authorization?.replace("Bearer ", "");
-  if (!token) token = req.query._token;
   if (!token) token = req.cookies?.token;
-  console.log("getUserFromReq - token:", token?.substring(0, 20) + "...");
   if (!token) return null;
   try {
     const user = jwt.verify(token, JWT_SECRET);
-    console.log("getUserFromReq - verified user:", user?.name);
     return user;
   } catch (err) {
-    console.log("getUserFromReq - error:", err.message);
     return null;
   }
 }
@@ -1564,7 +1627,7 @@ app.get("/", async (req, res) => {
   }
 
   const lives = await dbAll(db,
-    `SELECT l.id, l.title, l.stream_key, l.flv_id, l.status, l.scheduled_at, c.id as channel_id, c.name as channel, c.avatar_url as channel_avatar
+    `SELECT l.id, l.title, l.flv_id, l.status, l.scheduled_at, c.id as channel_id, c.name as channel, c.avatar_url as channel_avatar
      FROM live_streams l
      JOIN channels c ON c.id = l.channel_id
      WHERE l.status IN ('live','waiting','delayed','scheduled','ready')
@@ -1575,7 +1638,6 @@ app.get("/", async (req, res) => {
     title: l.title,
     channel: l.channel,
     channelAvatar: l.channel_avatar,
-    streamKey: l.stream_key,
     status: l.status,
     scheduledAt: l.scheduled_at,
     type: 'live'
@@ -1673,7 +1735,9 @@ app.get("/channel/:id", async (req, res) => {
   const user = getUserFromReq(req);
   
   const channel = await dbGet(db, 
-    "SELECT c.*, (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count FROM channels c WHERE c.id = ?", 
+    `SELECT c.id, c.owner_id, c.name, c.description, c.pronouns, c.banner_url, c.avatar_url,
+            (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count
+     FROM channels c WHERE c.id = ?`, 
     req.params.id);
   
   if (!channel) return res.status(404).send("Canal não encontrado");
@@ -1683,8 +1747,8 @@ app.get("/channel/:id", async (req, res) => {
     req.params.id);
   
   const live = await dbGet(db,
-    `SELECT l.*, c.stream_key FROM live_streams l 
-     JOIN channels c ON c.id = l.channel_id 
+    `SELECT l.id, l.channel_id, l.title, l.status, l.flv_id, l.scheduled_at
+     FROM live_streams l 
      WHERE l.channel_id = ? AND l.status IN ('live','waiting','scheduled','ready','delayed')
      ORDER BY CASE l.status WHEN 'live' THEN 0 WHEN 'waiting' THEN 1 WHEN 'scheduled' THEN 2 WHEN 'ready' THEN 3 ELSE 4 END, l.scheduled_at ASC`,
     req.params.id);
@@ -1702,7 +1766,9 @@ app.get("/user/:id", async (req, res) => {
   if (!profileUser) return res.status(404).send("Usuário não encontrado");
   
   const channels = await dbAll(db,
-    "SELECT c.*, (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count FROM channels c WHERE c.owner_id = ?",
+    `SELECT c.id, c.name, c.description, c.pronouns, c.banner_url, c.avatar_url,
+            (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count
+     FROM channels c WHERE c.owner_id = ?`,
     req.params.id);
   
   // Check if current user owns this profile
@@ -1720,7 +1786,8 @@ app.get("/live/:channelId", async (req, res) => {
   const { channelId } = req.params;
   
   let live = await dbGet(db, 
-    `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar, c.stream_key, c.pronouns as channel_pronouns
+    `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.ended_at, l.viewer_count,
+            c.name as channel_name, c.avatar_url as channel_avatar, c.pronouns as channel_pronouns
      FROM live_streams l 
      JOIN channels c ON l.channel_id = c.id 
      WHERE l.channel_id = ? AND l.status IN ('live','waiting','scheduled','ready','delayed')
@@ -1729,7 +1796,8 @@ app.get("/live/:channelId", async (req, res) => {
   
   if (!live) {
     live = await dbGet(db, 
-      `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar, c.stream_key, c.pronouns as channel_pronouns
+      `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.ended_at, l.viewer_count,
+              c.name as channel_name, c.avatar_url as channel_avatar, c.pronouns as channel_pronouns
        FROM live_streams l 
        JOIN channels c ON l.channel_id = c.id 
        WHERE l.channel_id = ? AND l.status = 'ended'
@@ -1782,6 +1850,17 @@ app.get("/creator", async (req, res) => {
   }
   
   res.render("creator", { channels, videos, stats, user, API: "http://localhost:4000/api" });
+});
+
+// Error handler global (evita que erros em rotas async derrubem o processo)
+app.use((err, req, res, next) => {
+  console.error("[ERROR]", err?.message || err);
+  if (res.headersSent) return next(err);
+  const status = Number.isInteger(err?.statusCode) ? err.statusCode : 500;
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Arquivo excede o tamanho máximo permitido' : `Erro no upload: ${err.code}` });
+  }
+  res.status(status).json({ error: status === 400 ? (err?.message || 'Requisição inválida') : 'Erro interno' });
 });
 
 // Socket.IO setup

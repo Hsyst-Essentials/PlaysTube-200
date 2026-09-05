@@ -204,7 +204,7 @@
   <script>
     const channelId = "<%= live.channel_id %>";
     const API = "http://localhost:4000/api";
-    const flvId = "<%= live.flv_id || live.stream_key %>";
+    const flvId = "<%= live.flv_id || '' %>";
     const FLV_URL = API + "/flv/" + flvId + ".flv";
 
     const video = document.getElementById("live-player");
@@ -234,7 +234,7 @@
       else { document.getElementById("video-container").requestFullscreen(); }
     });
 
-    if (flvjs.isSupported()) {
+    if (flvId && flvjs.isSupported()) {
       var player = flvjs.createPlayer({ type: 'flv', url: FLV_URL, isLive: true }, { enableWorker: false, lazyLoad: false });
       player.attachMediaElement(video);
       video.muted = false;

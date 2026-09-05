@@ -246,9 +246,6 @@
     }
     let token = getCookie('token');
     if (!token) token = localStorage.getItem('token');
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlToken = urlParams.get('_token');
-    if (urlToken && !token) { token = urlToken; window.history.replaceState({}, '', window.location.pathname); }
     const videoId = "<%= video.id %>";
     let currentUser = null;
 

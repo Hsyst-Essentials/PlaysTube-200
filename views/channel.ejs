@@ -132,9 +132,6 @@
     const API = "http://localhost:4000/api";
     let token = document.cookie.split('token=')[1]?.split(';')[0];
     if (!token) token = localStorage.getItem('token');
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlToken = urlParams.get('_token');
-    if (urlToken && !token) { token = urlToken; window.history.replaceState({}, '', window.location.pathname); }
     const channelId = "<%= channel.id %>";
     let isSubscribed = false;
     
