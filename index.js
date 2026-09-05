@@ -104,10 +104,18 @@ function sanitizeText(str) {
 function isSafeUrl(url) {
   if (!url || typeof url !== 'string') return false;
   const trimmed = url.trim();
-  if (trimmed.startsWith('/static/')) return true;
+  // Caracteres de ruptura que permitiriam quebrar atributos HTML ou o contexto CSS (background-image).
+  if (/['"<>\\`;()\n\r]/.test(trimmed)) return false;
+  if (trimmed.startsWith('/static/')) {
+    // Permite apenas caminhos "limpos" (nomes de arquivo/uploads), sem duplo-slashes ou ".."
+    return !/\/\//.test(trimmed) && !trimmed.includes('/../') && !trimmed.endsWith('/..') && !trimmed.endsWith('/');
+  }
   try {
     const parsed = new URL(trimmed);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    // Rejeita usuário/senha na URL (ex.: http://user:pass@host -> phishing de "host")
+    if (parsed.username || parsed.password) return false;
+    return true;
   } catch {
     return false;
   }
