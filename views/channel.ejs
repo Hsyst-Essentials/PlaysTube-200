@@ -148,10 +148,11 @@
         
         localStorage.setItem('userAvatar', user.avatar_url || '');
         
+        function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
         const avatarUrl = localStorage.getItem('userAvatar');
         const avatarHtml = avatarUrl 
-          ? `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;">`
-          : user.name.charAt(0).toUpperCase();
+          ? `<img src="${escA(avatarUrl)}" style="width:100%;height:100%;object-fit:cover;">`
+          : escA(user.name.charAt(0).toUpperCase());
         
         const menu = document.getElementById('user-menu');
         menu.innerHTML = `

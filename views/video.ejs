@@ -276,10 +276,11 @@
           localStorage.setItem('userAvatar', currentUser.avatar_url);
         }
         
+        function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
         const avatarUrl = localStorage.getItem('userAvatar');
         const avatarHtml = avatarUrl 
-          ? `<img src="${avatarUrl}" class="w-full h-full object-cover rounded-full">`
-          : currentUser.name.charAt(0).toUpperCase();
+          ? `<img src="${escA(avatarUrl)}" class="w-full h-full object-cover rounded-full">`
+          : escA(currentUser.name.charAt(0).toUpperCase());
         
         const menu = document.getElementById('user-menu');
         menu.innerHTML = `
@@ -287,7 +288,7 @@
             <i class="fas fa-video"></i>
           </a>
           <button id="btn-logout" class="glass-button">Sair</button>
-          <a href="/user/${currentUser.id}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+          <a href="/user/${escA(currentUser.id)}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
             ${avatarHtml}
           </a>
         `;
@@ -298,7 +299,12 @@
         
         document.getElementById('comment-avatar').textContent = currentUser.name.charAt(0).toUpperCase();
         if (currentUser.avatar_url) {
-          document.getElementById('comment-avatar').innerHTML = `<img src="${currentUser.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+          const avatarEl = document.createElement('img');
+          avatarEl.src = currentUser.avatar_url;
+          avatarEl.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+          const avatarBox = document.getElementById('comment-avatar');
+          avatarBox.textContent = '';
+          avatarBox.appendChild(avatarEl);
         }
       } catch (e) {
         document.getElementById('comment-logged-in')?.classList.add('hidden');
@@ -637,22 +643,40 @@
           return;
         }
         
-        list.innerHTML = comments.map(c => {
-          const avatarHtml = c.author_avatar && c.author_avatar.trim() !== '' 
-            ? '<img src="' + c.author_avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
-            : '<span style="font-weight:700;color:white;font-size:.85rem;">' + c.author_name.charAt(0).toUpperCase() + '</span>';
-          return `
-            <div class="comment">
-              <div class="comment-avatar">
-                ` + avatarHtml + `
-              </div>
-              <div>
-                <div class="comment-author">${c.author_name}</div>
-                <div class="comment-text">${c.text}</div>
-              </div>
-            </div>
-          `;
-        }).join("");
+        list.innerHTML = '';
+        comments.forEach(c => {
+          const commentEl = document.createElement('div');
+          commentEl.className = 'comment';
+
+          const avatarDiv = document.createElement('div');
+          avatarDiv.className = 'comment-avatar';
+          if (c.author_avatar && c.author_avatar.trim()) {
+            const img = document.createElement('img');
+            img.src = c.author_avatar;
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+            avatarDiv.appendChild(img);
+          } else {
+            const initial = document.createElement('span');
+            initial.style.cssText = 'font-weight:700;color:white;font-size:.85rem;';
+            initial.textContent = c.author_name.charAt(0).toUpperCase();
+            avatarDiv.appendChild(initial);
+          }
+
+          const body = document.createElement('div');
+          const authorEl = document.createElement('div');
+          authorEl.className = 'comment-author';
+          authorEl.textContent = c.author_name;
+          body.appendChild(authorEl);
+
+          const textEl = document.createElement('div');
+          textEl.className = 'comment-text';
+          textEl.textContent = c.text;
+          body.appendChild(textEl);
+
+          commentEl.appendChild(avatarDiv);
+          commentEl.appendChild(body);
+          list.appendChild(commentEl);
+        });
       } catch (e) { console.error(e); }
     }
     loadComments();
@@ -682,23 +706,25 @@
         const videos = await resp.json();
         const container = document.getElementById('recommendations');
         if (!container) return;
-        
+
+        function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
         container.innerHTML = videos.slice(0, 10).map(v => {
-          const channelAvatar = v.channelAvatar && v.channelAvatar.trim() !== '' 
-            ? '<img src="' + v.channelAvatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
-            : '<span style="font-weight:700;color:white;font-size:.7rem;">' + v.channel.charAt(0).toUpperCase() + '</span>';
+          const channelAvatar = v.channelAvatar && v.channelAvatar.trim() !== ''
+            ? '<img src="' + escA(v.channelAvatar) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
+            : '<span style="font-weight:700;color:white;font-size:.7rem;">' + escA(v.channel.charAt(0).toUpperCase()) + '</span>';
           return `
-            <a href="/video/${v.id}" class="rec-card">
-              <img src="${v.thumbnailUrl || '/static/' + v.id + '/thumbnail.jpg'}">
+            <a href="/video/${escA(v.id)}" class="rec-card">
+              <img src="${escA(v.thumbnailUrl || '/static/' + v.id + '/thumbnail.jpg')}">
               <div class="flex-1 min-w-0">
-                <div class="rec-card-title">${v.title}</div>
+                <div class="rec-card-title">${escA(v.title)}</div>
                 <div class="flex items-center gap-1" style="margin-top:0.2rem;">
                   <div class="channel-avatar" style="width:28px;height:28px;font-size:.65rem;">
                     ${channelAvatar}
                   </div>
-                  <span class="rec-card-meta">${v.channel}</span>
+                  <span class="rec-card-meta">${escA(v.channel)}</span>
                 </div>
-                <div class="rec-card-meta">${v.views} visualizações</div>
+                <div class="rec-card-meta">${escA(v.views)} visualizações</div>
               </div>
             </a>
           `;

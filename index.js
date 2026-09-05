@@ -77,6 +77,23 @@ function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: "7d" });
 }
 
+function sanitizeText(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, 5000);
+}
+
+function isSafeUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (trimmed.startsWith('/static/')) return true;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function authMiddleware(req, res, next) {
   let token = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : req.cookies?.token;
   if (!token) return res.status(401).json({ error: "Token ausente" });
@@ -604,15 +621,16 @@ nms.run();
 
 app.post("/api/register", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ error: "Campos obrigatórios" });
+  const cleanName = sanitizeText(name);
+  if (!cleanName || !email || !password) return res.status(400).json({ error: "Campos obrigatórios" });
   const exists = await dbGet(db, "SELECT id FROM users WHERE email = ?", email);
   if (exists) return res.status(409).json({ error: "E‑mail já registrado" });
   const hash = await bcrypt.hash(password, 12);
   const id = uuidv4();
-  await dbRun(db, "INSERT INTO users (id, name, email, password_hash) VALUES (?,?,?,?)", id, name, email, hash);
-  const token = signToken({ id, name, email });
+  await dbRun(db, "INSERT INTO users (id, name, email, password_hash) VALUES (?,?,?,?)", id, cleanName, email, hash);
+  const token = signToken({ id, name: cleanName, email });
   res.cookie("token", token, { maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: "lax" });
-  res.json({ user: { id, name, email } });
+  res.json({ user: { id, name: cleanName, email } });
 });
 
 app.post("/api/login", async (req, res) => {
@@ -640,13 +658,14 @@ app.get("/api/channels", authMiddleware, async (req, res) => {
 
 app.post("/api/channels", authMiddleware, async (req, res) => {
   const { name, description } = req.body;
-  if (!name) return res.status(400).json({ error: "Nome do canal obrigatório" });
-  const existing = await dbGet(db, "SELECT id FROM channels WHERE owner_id = ? AND name = ?", req.user.id, name);
+  const cleanName = sanitizeText(name);
+  if (!cleanName) return res.status(400).json({ error: "Nome do canal obrigatório" });
+  const existing = await dbGet(db, "SELECT id FROM channels WHERE owner_id = ? AND name = ?", req.user.id, cleanName);
   if (existing) return res.status(409).json({ error: "Canal com este nome já existe" });
   const id = uuidv4();
   const streamKey = uuidv4().replace(/-/g, "").substring(0, 32);
-  await dbRun(db, "INSERT INTO channels (id, owner_id, name, description, stream_key) VALUES (?,?,?,?,?)", id, req.user.id, name, description || "", streamKey);
-  res.json({ id, name, description: description || "", streamKey });
+  await dbRun(db, "INSERT INTO channels (id, owner_id, name, description, stream_key) VALUES (?,?,?,?,?)", id, req.user.id, cleanName, sanitizeText(description) || "", streamKey);
+  res.json({ id, name: cleanName, description: sanitizeText(description) || "", streamKey });
 });
 
 app.get("/api/channels/:id", async (req, res) => {
@@ -681,9 +700,11 @@ app.patch("/api/channels/:id", authMiddleware, async (req, res) => {
   const channel = await dbGet(db, "SELECT id FROM channels WHERE id = ? AND owner_id = ?", req.params.id, req.user.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   const { name, description, pronouns, banner_url, avatar_url } = req.body;
-  if (name) await dbRun(db, "UPDATE channels SET name = ? WHERE id = ?", name, req.params.id);
-  if (description !== undefined) await dbRun(db, "UPDATE channels SET description = ? WHERE id = ?", description, req.params.id);
-  if (pronouns !== undefined) await dbRun(db, "UPDATE channels SET pronouns = ? WHERE id = ?", pronouns, req.params.id);
+  if (banner_url && !isSafeUrl(banner_url)) return res.status(400).json({ error: "banner_url inválido (use uma URL http(s) ou /static/...)" });
+  if (avatar_url && !isSafeUrl(avatar_url)) return res.status(400).json({ error: "avatar_url inválido (use uma URL http(s) ou /static/...)" });
+  if (name) await dbRun(db, "UPDATE channels SET name = ? WHERE id = ?", sanitizeText(name), req.params.id);
+  if (description !== undefined) await dbRun(db, "UPDATE channels SET description = ? WHERE id = ?", sanitizeText(description), req.params.id);
+  if (pronouns !== undefined) await dbRun(db, "UPDATE channels SET pronouns = ? WHERE id = ?", sanitizeText(pronouns), req.params.id);
   if (banner_url) await dbRun(db, "UPDATE channels SET banner_url = ? WHERE id = ?", banner_url, req.params.id);
   if (avatar_url) await dbRun(db, "UPDATE channels SET avatar_url = ? WHERE id = ?", avatar_url, req.params.id);
   const updated = await dbGet(db, "SELECT * FROM channels WHERE id = ?", req.params.id);
@@ -988,14 +1009,15 @@ app.get("/api/videos/:id/comments", async (req, res) => {
 
 app.post("/api/videos/:id/comments", authMiddleware, async (req, res) => {
   const { text } = req.body;
-  if (!text) return res.status(400).json({ error: "Texto obrigatório" });
+  const cleanText = sanitizeText(text);
+  if (!cleanText) return res.status(400).json({ error: "Texto obrigatório" });
   const commentId = uuidv4();
   await dbRun(db, 
     "INSERT INTO comments (id, video_id, author_id, text) VALUES (?,?,?,?)",
     commentId,
     req.params.id,
     req.user.id,
-    text
+    cleanText
   );
   res.json({ commentId });
 });
@@ -1005,8 +1027,9 @@ app.patch("/api/comments/:id", authMiddleware, async (req, res) => {
   if (!comment) return res.status(404).json({ error: "Comentário não encontrado" });
   if (comment.author_id !== req.user.id) return res.status(403).json({ error: "Acesso negado" });
   const { text } = req.body;
-  if (!text) return res.status(400).json({ error: "Texto obrigatório" });
-  await dbRun(db, "UPDATE comments SET text = ? WHERE id = ?", text, comment.id);
+  const cleanText = sanitizeText(text);
+  if (!cleanText) return res.status(400).json({ error: "Texto obrigatório" });
+  await dbRun(db, "UPDATE comments SET text = ? WHERE id = ?", cleanText, comment.id);
   res.json({ ok: true });
 });
 
@@ -1082,13 +1105,14 @@ app.get("/api/notifications/unread-count", authMiddleware, async (req, res) => {
 app.post('/api/live/:channelId/chat', authMiddleware, async (req, res) => {
   const { channelId } = req.params;
   const { text } = req.body;
-  if (!text) return res.status(400).json({ error: 'Texto obrigatório' });
+  const cleanText = sanitizeText(text);
+  if (!cleanText) return res.status(400).json({ error: 'Texto obrigatório' });
   const user = await dbGet(db, 'SELECT name FROM users WHERE id = ?', req.user.id);
-  const author = user?.name || 'Anonymous';
+  const author = sanitizeText(user?.name) || 'Anonymous';
   const id = uuidv4();
   await dbRun(db,
     'INSERT INTO live_chat_messages (id, channel_id, author, text) VALUES (?,?,?,?)',
-    id, channelId, author, text
+    id, channelId, author, cleanText
   );
   // Also push to in-memory cache so chat-history includes this message
   if (!liveChats[channelId]) liveChats[channelId] = [];
@@ -1096,19 +1120,20 @@ app.post('/api/live/:channelId/chat', authMiddleware, async (req, res) => {
     id,
     username: author,
     author,
-    message: text,
-    text,
+    message: cleanText,
+    text: cleanText,
     timestamp: new Date().toISOString()
   });
   if (liveChats[channelId].length > 200) liveChats[channelId].shift();
   // Emit to all sockets listening to this channel
-  io.to(`live-${channelId}`).emit('new-message', { author, text });
+  io.to(`live-${channelId}`).emit('new-message', { author, text: cleanText });
   res.json({ ok: true });
 });
 
 app.post("/api/live", authMiddleware, async (req, res) => {
   const { channelId, title, description, mode, scheduledAt } = req.body;
-  if (!channelId || !title) return res.status(400).json({ error: "Canal e título obrigatórios" });
+  const cleanTitle = sanitizeText(title);
+  if (!channelId || !cleanTitle) return res.status(400).json({ error: "Canal e título obrigatórios" });
   const channel = await dbGet(db, "SELECT id, owner_id, stream_key FROM channels WHERE id = ?", channelId);
   if (!channel || channel.owner_id !== req.user.id) return res.status(403).json({ error: "Acesso negado" });
 
@@ -1128,7 +1153,7 @@ app.post("/api/live", authMiddleware, async (req, res) => {
 
   await dbRun(db,
     "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, scheduled_at) VALUES (?,?,?,?,?,?,?,?)",
-    liveId, channelId, title, description || "", status, streamKey, flvId, scheduledAtVal
+    liveId, channelId, cleanTitle, sanitizeText(description) || "", status, streamKey, flvId, scheduledAtVal
   );
   res.json({ liveId, streamKey, flvId, status, scheduledAt: scheduledAtVal });
 });
@@ -1141,7 +1166,8 @@ app.post("/api/channels/:id/schedule-live", authMiddleware, async (req, res) => 
   const channel = await dbGet(db, "SELECT id, owner_id FROM channels WHERE id = ?", req.params.id);
   if (!channel || channel.owner_id !== req.user.id) return res.status(403).json({ error: "Acesso negado" });
   const { title, description, scheduledAt } = req.body;
-  if (!title || !scheduledAt) return res.status(400).json({ error: "Título e horário obrigatórios" });
+  const cleanTitle = sanitizeText(title);
+  if (!cleanTitle || !scheduledAt) return res.status(400).json({ error: "Título e horário obrigatórios" });
   
   const streamKey = channel.stream_key || uuidv4().replace(/-/g, "");
   const flvId = uuidv4().replace(/-/g, "").substring(0, 16);
@@ -1149,7 +1175,7 @@ app.post("/api/channels/:id/schedule-live", authMiddleware, async (req, res) => 
   
   await dbRun(db,
     "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, scheduled_at) VALUES (?,?,?,?,?,?,?,?)",
-    liveId, req.params.id, title, description || "", "scheduled", streamKey, flvId, new Date(scheduledAt).toISOString().replace('T', ' ').substring(0, 19)
+    liveId, req.params.id, cleanTitle, sanitizeText(description) || "", "scheduled", streamKey, flvId, new Date(scheduledAt).toISOString().replace('T', ' ').substring(0, 19)
   );
   res.json({ liveId, streamKey, flvId, status: 'scheduled', scheduledAt });
 });
@@ -1409,18 +1435,19 @@ app.delete("/api/videos/:id/like", authMiddleware, async (req, res) => {
 
 app.patch("/api/users/me", authMiddleware, async (req, res) => {
   const { name, password, bio, pronouns, avatar_url } = req.body;
+  if (avatar_url && !isSafeUrl(avatar_url)) return res.status(400).json({ error: "avatar_url inválido (use uma URL http(s) ou /static/...)" });
   if (name) {
-    await dbRun(db, "UPDATE users SET name = ? WHERE id = ?", name, req.user.id);
+    await dbRun(db, "UPDATE users SET name = ? WHERE id = ?", sanitizeText(name), req.user.id);
   }
   if (password) {
     const hash = await bcrypt.hash(password, 12);
     await dbRun(db, "UPDATE users SET password_hash = ? WHERE id = ?", hash, req.user.id);
   }
   if (bio !== undefined) {
-    await dbRun(db, "UPDATE users SET bio = ? WHERE id = ?", bio, req.user.id);
+    await dbRun(db, "UPDATE users SET bio = ? WHERE id = ?", sanitizeText(bio), req.user.id);
   }
   if (pronouns !== undefined) {
-    await dbRun(db, "UPDATE users SET pronouns = ? WHERE id = ?", pronouns, req.user.id);
+    await dbRun(db, "UPDATE users SET pronouns = ? WHERE id = ?", sanitizeText(pronouns), req.user.id);
   }
   if (avatar_url) {
     await dbRun(db, "UPDATE users SET avatar_url = ? WHERE id = ?", avatar_url, req.user.id);
@@ -1765,6 +1792,21 @@ const io = new Server(httpServer, {
 
 const liveChats = {};
 
+io.use((socket, next) => {
+  try {
+    let token = socket.handshake.auth?.token;
+    if (!token) {
+      const cookieStr = socket.handshake.headers.cookie || '';
+      const match = cookieStr.match(/(?:^|;\s*)token=([^;]*)/);
+      token = match ? match[1] : undefined;
+    }
+    socket.user = token ? jwt.verify(token, JWT_SECRET) : null;
+  } catch {
+    socket.user = null;
+  }
+  next();
+});
+
 io.on("connection", (socket) => {
   console.log("[SOCKET] Cliente conectado:", socket.id);
   
@@ -1790,18 +1832,23 @@ io.on("connection", (socket) => {
   });
   
   socket.on("send-message", async (data) => {
-    const { channelId, username, message, avatar } = data;
+    if (!socket.user) return socket.emit('error', 'Autenticação necessária');
+    const { channelId, message } = data;
+    const cleanText = sanitizeText(message);
+    if (!cleanText) return socket.emit('error', 'Texto obrigatório');
+    const author = sanitizeText(socket.user.name) || 'Anonymous';
     const msgData = {
       id: uuidv4(),
-      username,
-      message,
-      avatar,
+      username: author,
+      author,
+      message: cleanText,
+      text: cleanText,
       timestamp: new Date().toISOString()
     };
     // Persist message
     await dbRun(db,
       "INSERT INTO live_chat_messages (id, channel_id, author, text) VALUES (?,?,?,?)",
-      msgData.id, channelId, username, message
+      msgData.id, channelId, author, cleanText
     );
     // Keep in‑memory cache (optional)
     if (!liveChats[channelId]) liveChats[channelId] = [];

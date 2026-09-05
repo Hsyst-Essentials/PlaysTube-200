@@ -109,10 +109,11 @@
           localStorage.setItem('userAvatar', user.avatar_url);
         }
         
+        function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
         const avatarUrl = localStorage.getItem('userAvatar');
         const avatarHtml = avatarUrl 
-          ? `<img src="${avatarUrl}" class="w-full h-full object-cover">`
-          : user.name.charAt(0).toUpperCase();
+          ? `<img src="${escA(avatarUrl)}" class="w-full h-full object-cover">`
+          : escA(user.name.charAt(0).toUpperCase());
         
         const menu = document.getElementById('user-menu');
         
@@ -121,7 +122,7 @@
             <i class="fas fa-video"></i>
           </a>
           <button id="btn-logout" class="glass-button">Sair</button>
-          <a href="/user/${user.id}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+          <a href="/user/${escA(user.id)}" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
             ${avatarHtml}
           </a>
         `;
