@@ -896,12 +896,20 @@ function rejectType(file, allowed) {
 const uploadVideo = multer({
   storage,
   limits: { fileSize: 2 * 1024 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => cb(rejectType(file, ALLOWED_VIDEO_MIME)),
+  fileFilter: (req, file, cb) => {
+    const err = rejectType(file, ALLOWED_VIDEO_MIME);
+    if (err) cb(err);
+    else cb(null, true);
+  },
 });
 const uploadImage = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => cb(rejectType(file, ALLOWED_IMAGE_MIME)),
+  fileFilter: (req, file, cb) => {
+    const err = rejectType(file, ALLOWED_IMAGE_MIME);
+    if (err) cb(err);
+    else cb(null, true);
+  },
 });
 
 app.post("/api/videos", authMiddleware, uploadVideo.single("video"), async (req, res) => {
