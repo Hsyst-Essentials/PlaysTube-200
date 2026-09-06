@@ -57,10 +57,11 @@
           container.innerHTML = '<div class="empty-state" style="grid-column:1/-1;"><i class="fas fa-video"></i><p>Nenhuma transmissão ao vivo no momento</p></div>';
           return;
         }
+        function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
         container.innerHTML = lives.map(live => {
           const avatarHtml = live.channel_avatar && live.channel_avatar.trim() !== ''
-            ? `<img src="${live.channel_avatar}" class="channel-avatar" style="width:36px;height:36px;font-size:.7rem;">`
-            : `<div class="channel-avatar" style="width:36px;height:36px;font-size:.7rem;">${live.channel_name.charAt(0).toUpperCase()}</div>`;
+            ? `<img src="${escA(live.channel_avatar)}" class="channel-avatar" style="width:36px;height:36px;font-size:.7rem;">`
+            : `<div class="channel-avatar" style="width:36px;height:36px;font-size:.7rem;">${escA(live.channel_name.charAt(0).toUpperCase())}</div>`;
           let badge = '';
           if (live.status === 'live') {
             badge = '<span class="live-badge" style="position:absolute;top:.5rem;left:.5rem;">AO VIVO</span>';
@@ -68,16 +69,16 @@
             badge = '<span class="glass-badge" style="position:absolute;top:.5rem;left:.5rem;border-color:rgba(139,92,246,0.2);color:var(--purple-light);">EM BREVE</span>';
           }
           return `
-            <a href="/live/${live.channel_id}" class="video-card">
+            <a href="/live/${escA(live.channel_id)}" class="video-card">
               <div class="video-card-thumb" style="background:#000;display:flex;align-items:center;justify-content:center;">
                 <i class="fas fa-broadcast-tower text-3xl" style="opacity:.3;${live.status !== 'live' ? 'color:var(--purple);' : ''}"></i>
                 ${badge}
               </div>
               <div class="video-card-body">
-                <h3 class="video-card-title">${live.title}</h3>
+                <h3 class="video-card-title">${escA(live.title)}</h3>
                 <div style="display:flex;align-items:center;gap:.5rem;margin-top:.5rem;">
                   ${avatarHtml}
-                  <span class="video-card-meta">${live.channel_name}</span>
+                  <span class="video-card-meta">${escA(live.channel_name)}</span>
                 </div>
               </div>
             </a>
@@ -203,7 +204,7 @@
   <script>
     const channelId = "<%= live.channel_id %>";
     const API = "http://localhost:4000/api";
-    const flvId = "<%= live.flv_id || live.stream_key %>";
+    const flvId = "<%= live.flv_id || '' %>";
     const FLV_URL = API + "/flv/" + flvId + ".flv";
 
     const video = document.getElementById("live-player");
@@ -233,7 +234,7 @@
       else { document.getElementById("video-container").requestFullscreen(); }
     });
 
-    if (flvjs.isSupported()) {
+    if (flvId && flvjs.isSupported()) {
       var player = flvjs.createPlayer({ type: 'flv', url: FLV_URL, isLive: true }, { enableWorker: false, lazyLoad: false });
       player.attachMediaElement(video);
       video.muted = false;
@@ -249,7 +250,9 @@
     if (typeof io === 'undefined') {
       chatMessages.innerHTML = '<div class="text-white/40 text-sm p-4">Chat indisponível</div>';
     } else {
-    const socket = io();
+    let socketToken = document.cookie.split('token=')[1]?.split(';')[0];
+    if (!socketToken) socketToken = localStorage.getItem('token') || undefined;
+    const socket = io({ auth: { token: socketToken } });
     const chatForm = document.getElementById("chat-form");
     const chatInput = document.getElementById("chat-input");
     socket.emit("join-live", channelId);
@@ -260,7 +263,15 @@
           const div = document.createElement("div");
           div.className = "chat-message glass";
           div.style.cssText = "padding:.5rem;border-radius:8px;";
-          div.innerHTML = `<span style="font-weight:500;color:var(--red);">${msg.author || msg.username}:</span> <span style="color:var(--text);">${msg.text || msg.message}</span>`;
+          const authorEl = document.createElement('span');
+          authorEl.style.cssText = 'font-weight:500;color:var(--red);';
+          authorEl.textContent = (msg.author || msg.username) + ':';
+          const textEl = document.createElement('span');
+          textEl.style.cssText = 'color:var(--text);';
+          textEl.textContent = msg.text || msg.message;
+          div.appendChild(authorEl);
+          div.appendChild(document.createTextNode(' '));
+          div.appendChild(textEl);
           chatMessages.appendChild(div);
         });
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -271,7 +282,15 @@
       const div = document.createElement("div");
       div.className = "chat-message glass";
       div.style.cssText = "padding:.5rem;border-radius:8px;";
-      div.innerHTML = `<span style="font-weight:500;color:var(--red);">${msg.author}:</span> <span style="color:var(--text);">${msg.text}</span>`;
+      const authorEl = document.createElement('span');
+      authorEl.style.cssText = 'font-weight:500;color:var(--red);';
+      authorEl.textContent = msg.author + ':';
+      const textEl = document.createElement('span');
+      textEl.style.cssText = 'color:var(--text);';
+      textEl.textContent = msg.text;
+      div.appendChild(authorEl);
+      div.appendChild(document.createTextNode(' '));
+      div.appendChild(textEl);
       chatMessages.appendChild(div);
       chatMessages.scrollTop = chatMessages.scrollHeight;
     });

@@ -412,7 +412,12 @@
         currentUser = await resp.json();
         
         if (currentUser.avatar_url) {
-          document.getElementById('user-avatar').innerHTML = `<img src="${currentUser.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+          const avatarImg = document.createElement('img');
+          avatarImg.src = currentUser.avatar_url;
+          avatarImg.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+          const avatarBox = document.getElementById('user-avatar');
+          avatarBox.textContent = '';
+          avatarBox.appendChild(avatarImg);
         } else {
           document.getElementById('user-avatar').textContent = currentUser.name.charAt(0).toUpperCase();
         }
@@ -456,6 +461,9 @@
       });
     }
     
+    function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function escJs(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r\n|\r|\n/g,' '); }
+    
     async function loadDashboard() {
       const videosResp = await fetch(`${API}/creator/videos`, { headers: { Authorization: `Bearer ${token}` } });
       const videos = await videosResp.json();
@@ -464,19 +472,25 @@
       if (videos.length === 0) {
         document.getElementById('no-videos').classList.remove('hidden');
       } else {
-        tbody.innerHTML = videos.map(v => `
+        tbody.innerHTML = videos.map(v => {
+          const vid = escA(v.id);
+          const title = escA(v.title);
+          const desc = escA(v.description ? v.description.substring(0, 50) : '');
+          const titJs = escA(escJs(v.title));
+          const descJs = escA(escJs(v.description || ''));
+          return `
           <tr>
             <td>
-              <a href="/video/${v.id}" style="display:flex;align-items:center;gap:.75rem;">
-                <img src="/static/${v.id}/thumbnail.jpg" style="width:96px;height:56px;object-fit:cover;border-radius:8px;">
+              <a href="/video/${vid}" style="display:flex;align-items:center;gap:.75rem;">
+                <img src="/static/${vid}/thumbnail.jpg" style="width:96px;height:56px;object-fit:cover;border-radius:8px;">
                 <div>
-                  <span style="font-weight:500;color:var(--text);display:block;">${v.title}</span>
-                  <span style="font-size:.75rem;color:var(--text-muted);">${v.description ? v.description.substring(0, 50) + '...' : ''}</span>
+                  <span style="font-weight:500;color:var(--text);display:block;">${title}</span>
+                  <span style="font-size:.75rem;color:var(--text-muted);">${desc}</span>
                 </div>
               </a>
             </td>
-            <td>${v.views}</td>
-            <td>${v.comment_count}</td>
+            <td>${escA(v.views)}</td>
+            <td>${escA(v.comment_count)}</td>
             <td>${new Date(v.created_at).toLocaleDateString('pt-BR')}</td>
             <td>
               ${
@@ -488,15 +502,16 @@
               }
             </td>
             <td style="text-align:right;">
-              <button class="btn-icon" style="display:inline-flex;" onclick="editVideo('${v.id}', '${v.title.replace(/'/g, "\\'")}', '${(v.description || '').replace(/'/g, "\\'")}')">
+              <button class="btn-icon" style="display:inline-flex;" onclick="editVideo('${vid}', '${titJs}', '${descJs}')">
                 <i class="fas fa-edit"></i>
               </button>
-              <button class="btn-icon" style="display:inline-flex;color:var(--red);" onclick="deleteVideo('${v.id}')">
+              <button class="btn-icon" style="display:inline-flex;color:var(--red);" onclick="deleteVideo('${vid}')">
                 <i class="fas fa-trash"></i>
               </button>
             </td>
           </tr>
-        `).join('');
+          `;
+        }).join('');
       }
       
       const statsResp = await fetch(`${API}/creator/stats`, { headers: { Authorization: `Bearer ${token}` } });
@@ -513,14 +528,23 @@
       });
       
       if (currentChannel.banner_url) {
-        document.getElementById('banner-preview').innerHTML = `<img src="${currentChannel.banner_url}" style="width:100%;height:100%;object-fit:cover;">`;
+        const bannerImg = document.createElement('img');
+        bannerImg.src = currentChannel.banner_url;
+        bannerImg.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+        const bannerBox = document.getElementById('banner-preview');
+        bannerBox.textContent = '';
+        bannerBox.appendChild(bannerImg);
       }
       
       if (currentChannel.avatar_url) {
         const avatarPreview = document.getElementById('avatar-preview');
         const avatarInitial = document.getElementById('avatar-initial');
         if (avatarPreview) {
-          avatarPreview.innerHTML = `<img src="${currentChannel.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+          const avatarImg = document.createElement('img');
+          avatarImg.src = currentChannel.avatar_url;
+          avatarImg.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+          avatarPreview.textContent = '';
+          avatarPreview.appendChild(avatarImg);
         }
         if (avatarInitial) avatarInitial.style.display = 'none';
       } else {

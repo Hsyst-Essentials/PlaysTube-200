@@ -142,9 +142,6 @@
   <script>
     const API = "http://localhost:4000/api";
     let token = document.cookie.split('token=')[1]?.split(';')[0];
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlToken = urlParams.get('_token');
-    if (urlToken && !token) { token = urlToken; window.history.replaceState({}, '', window.location.pathname); }
     let currentUserId = null;
     
 const profileUserIdRendered = "<%= profileUser.id %>";
@@ -161,10 +158,11 @@ const profileUserIdRendered = "<%= profileUser.id %>";
         
         localStorage.setItem('userAvatar', user.avatar_url || '');
         
+        function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
         const avatarUrl = localStorage.getItem('userAvatar');
         const avatarHtml = avatarUrl && avatarUrl.trim() !== '' 
-          ? `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
-          : user.name.charAt(0).toUpperCase();
+          ? `<img src="${escA(avatarUrl)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+          : escA(user.name.charAt(0).toUpperCase());
         
         const menu = document.getElementById('user-menu');
         menu.innerHTML = `
@@ -250,11 +248,12 @@ if (resp.ok) {
           if (data.avatar_url) {
             localStorage.setItem('userAvatar', data.avatar_url);
             const menu = document.getElementById('user-menu');
+            function escA(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
             menu.innerHTML = `
               <a href="/creator" class="btn-icon" title="Creator Studio"><i class="fas fa-video"></i></a>
               <button id="btn-logout" class="glass-button">Sair</button>
-              <a href="/user/` + currentUserId + `" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
-                <img src="` + data.avatar_url + `" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
+              <a href="/user/` + escA(currentUserId) + `" class="channel-avatar" style="width:36px;height:36px;font-size:.85rem;">
+                <img src="` + escA(data.avatar_url) + `" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
               </a>
             `;
           }

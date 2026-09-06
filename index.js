@@ -67,15 +67,110 @@ const __dirname = path.resolve();
 // Configure the dotenv lib
 config();
 
+process.on("unhandledRejection", (reason) => {
+  console.error("[UNHANDLED REJECTION]", reason);
+});
+
 const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-	console.log("Missing JWT_SECRET!");
-	process.exit(-1);
+const KNOWN_WEAK_SECRETS = new Set([
+  "sua-senha-secreta",
+  "troque-por-uma-chave-segura-em-producao",
+  "change-me",
+  "changeme",
+  "secreto",
+  "secret",
+  "password",
+  "default",
+]);
+if (!JWT_SECRET || JWT_SECRET.length < 32 || KNOWN_WEAK_SECRETS.has(JWT_SECRET.toLowerCase())) {
+  console.error("JWT_SECRET ausente, muito curto (< 32 caracteres) ou é um valor conhecido/de exemplo.");
+  console.error("Gere uma chave robusta com: openssl rand -hex 32");
+  process.exit(-1);
 }
 
 function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: "7d" });
 }
+
+function sanitizeText(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/[<>]/g, '')
+    .trim()
+    .slice(0, 5000);
+}
+
+function isSafeUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  // Caracteres de ruptura que permitiriam quebrar atributos HTML ou o contexto CSS (background-image).
+  if (/['"<>\\`;()\n\r]/.test(trimmed)) return false;
+  if (trimmed.startsWith('/static/')) {
+    // Permite apenas caminhos "limpos" (nomes de arquivo/uploads), sem duplo-slashes ou ".."
+    return !/\/\//.test(trimmed) && !trimmed.includes('/../') && !trimmed.endsWith('/..') && !trimmed.endsWith('/');
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    // Rejeita usuário/senha na URL (ex.: http://user:pass@host -> phishing de "host")
+    if (parsed.username || parsed.password) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Rate limiting leve e sem dependências (brute force / enumeração de contas — F6.2)
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+const RATE_MAX_PER_IP = 20;
+const RATE_FAILED_LOGINS_PER_ACCOUNT = 5;
+const rateBuckets = new Map(); // ip -> { count, resetAt }
+const loginFailures = new Map(); // email -> { count, resetAt }
+
+function rateLimitByIp(req, res, next) {
+  const key = req.ip || 'unknown';
+  const now = Date.now();
+  let b = rateBuckets.get(key);
+  if (!b || b.resetAt <= now) { b = { count: 0, resetAt: now + RATE_WINDOW_MS }; rateBuckets.set(key, b); }
+  b.count++;
+  if (b.count > RATE_MAX_PER_IP) {
+    res.set('Retry-After', String(Math.ceil((b.resetAt - now) / 1000)));
+    return res.status(429).json({ error: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+  }
+  next();
+}
+
+function loginLockout(req, res, next) {
+  const email = (req.body?.email || '').trim().toLowerCase();
+  if (!email) return next();
+  const fa = loginFailures.get(email);
+  const now = Date.now();
+  if (fa && fa.resetAt > now && fa.count >= RATE_FAILED_LOGINS_PER_ACCOUNT) {
+    res.set('Retry-After', String(Math.ceil((fa.resetAt - now) / 1000)));
+    return res.status(429).json({ error: 'Muitas tentativas para esta conta. Tente novamente mais tarde.' });
+  }
+  next();
+}
+
+function registerLoginFailure(email) {
+  const key = (email || '').trim().toLowerCase();
+  if (!key) return;
+  const now = Date.now();
+  const fa = loginFailures.get(key);
+  if (!fa || fa.resetAt <= now) { loginFailures.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS }); }
+  else { fa.count++; }
+}
+
+function clearLoginFailures(email) {
+  loginFailures.delete((email || '').trim().toLowerCase());
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, b] of rateBuckets) if (b.resetAt <= now) rateBuckets.delete(k);
+  for (const [k, fa] of loginFailures) if (fa.resetAt <= now) loginFailures.delete(k);
+}, 60 * 1000).unref();
 
 function authMiddleware(req, res, next) {
   let token = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : req.cookies?.token;
@@ -552,11 +647,18 @@ nms.on('error', (err) => {
 const app = express();
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use("/static", express.static(UPLOAD_ROOT));
+const CORS_ORIGINS = new Set((process.env.CORS_ORIGINS || 'http://localhost:4000,http://127.0.0.1:4000')
+  .split(',').map(s => s.trim()).filter(Boolean));
+app.use("/static", express.static(UPLOAD_ROOT, {
+  setHeaders: (res) => res.setHeader("X-Content-Type-Options", "nosniff")
+}));
 app.use(cookieParser());
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({
+  origin: (origin, cb) => cb(null, !origin || CORS_ORIGINS.has(origin)),
+  credentials: true
+}));
 
 const rtmpSessions = new Map();
 const channelVersions = new Map(); // channelId -> version counter (increments on each new publish session)
@@ -590,11 +692,12 @@ async function createLiveRecord(channelId, channelName, streamKey, flvId) {
   }
 }
 
-// API endpoint to get active RTMP sessions
-app.get("/api/rtmp/sessions", (req, res) => {
+// API endpoint to get active RTMP sessions (operador/logado; nunca expõe stream_key)
+app.get("/api/rtmp/sessions", authMiddleware, (req, res) => {
   const sessions = [];
   for (const [id, session] of rtmpSessions) {
-    sessions.push({ id, ...session });
+    const { streamKey, ...safeSession } = session;
+    sessions.push({ id, ...safeSession });
   }
   res.json({ sessions, count: sessions.length });
 });
@@ -602,27 +705,29 @@ app.get("/api/rtmp/sessions", (req, res) => {
 // Start the RTMP server
 nms.run();
 
-app.post("/api/register", async (req, res) => {
+app.post("/api/register", rateLimitByIp, async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ error: "Campos obrigatórios" });
+  const cleanName = sanitizeText(name);
+  if (!cleanName || !email || !password) return res.status(400).json({ error: "Campos obrigatórios" });
   const exists = await dbGet(db, "SELECT id FROM users WHERE email = ?", email);
   if (exists) return res.status(409).json({ error: "E‑mail já registrado" });
   const hash = await bcrypt.hash(password, 12);
   const id = uuidv4();
-  await dbRun(db, "INSERT INTO users (id, name, email, password_hash) VALUES (?,?,?,?)", id, name, email, hash);
-  const token = signToken({ id, name, email });
+  await dbRun(db, "INSERT INTO users (id, name, email, password_hash) VALUES (?,?,?,?)", id, cleanName, email, hash);
+  const token = signToken({ id, name: cleanName, email });
   res.cookie("token", token, { maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: "lax" });
-  res.json({ user: { id, name, email } });
+  res.json({ user: { id, name: cleanName, email } });
 });
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", rateLimitByIp, loginLockout, async (req, res) => {
   const { email, password } = req.body;
   const user = await dbGet(db, "SELECT * FROM users WHERE email = ?", email);
-  if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
-  const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: "Credenciais inválidas" });
+  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    registerLoginFailure(email);
+    return res.status(401).json({ error: "Credenciais inválidas" });
+  }
+  clearLoginFailures(email);
   const token = signToken(user);
-  console.log("Login success, setting cookie for user:", user.email);
   res.cookie("token", token, { maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: "lax" });
   res.json({ user: { id: user.id, name: user.name, email: user.email } });
 });
@@ -640,17 +745,22 @@ app.get("/api/channels", authMiddleware, async (req, res) => {
 
 app.post("/api/channels", authMiddleware, async (req, res) => {
   const { name, description } = req.body;
-  if (!name) return res.status(400).json({ error: "Nome do canal obrigatório" });
-  const existing = await dbGet(db, "SELECT id FROM channels WHERE owner_id = ? AND name = ?", req.user.id, name);
+  const cleanName = sanitizeText(name);
+  if (!cleanName) return res.status(400).json({ error: "Nome do canal obrigatório" });
+  const existing = await dbGet(db, "SELECT id FROM channels WHERE owner_id = ? AND name = ?", req.user.id, cleanName);
   if (existing) return res.status(409).json({ error: "Canal com este nome já existe" });
   const id = uuidv4();
   const streamKey = uuidv4().replace(/-/g, "").substring(0, 32);
-  await dbRun(db, "INSERT INTO channels (id, owner_id, name, description, stream_key) VALUES (?,?,?,?,?)", id, req.user.id, name, description || "", streamKey);
-  res.json({ id, name, description: description || "", streamKey });
+  await dbRun(db, "INSERT INTO channels (id, owner_id, name, description, stream_key) VALUES (?,?,?,?,?)", id, req.user.id, cleanName, sanitizeText(description) || "", streamKey);
+  res.json({ id, name: cleanName, description: sanitizeText(description) || "", streamKey });
 });
 
 app.get("/api/channels/:id", async (req, res) => {
-  const channel = await dbGet(db, "SELECT c.*, (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count FROM channels c WHERE c.id = ?", req.params.id);
+  const channel = await dbGet(db,
+    `SELECT c.id, c.owner_id, c.name, c.description, c.pronouns, c.banner_url, c.avatar_url, c.created_at,
+            (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count
+     FROM channels c WHERE c.id = ?`,
+    req.params.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   res.json(channel);
 });
@@ -681,12 +791,16 @@ app.patch("/api/channels/:id", authMiddleware, async (req, res) => {
   const channel = await dbGet(db, "SELECT id FROM channels WHERE id = ? AND owner_id = ?", req.params.id, req.user.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   const { name, description, pronouns, banner_url, avatar_url } = req.body;
-  if (name) await dbRun(db, "UPDATE channels SET name = ? WHERE id = ?", name, req.params.id);
-  if (description !== undefined) await dbRun(db, "UPDATE channels SET description = ? WHERE id = ?", description, req.params.id);
-  if (pronouns !== undefined) await dbRun(db, "UPDATE channels SET pronouns = ? WHERE id = ?", pronouns, req.params.id);
+  if (banner_url && !isSafeUrl(banner_url)) return res.status(400).json({ error: "banner_url inválido (use uma URL http(s) ou /static/...)" });
+  if (avatar_url && !isSafeUrl(avatar_url)) return res.status(400).json({ error: "avatar_url inválido (use uma URL http(s) ou /static/...)" });
+  if (name) await dbRun(db, "UPDATE channels SET name = ? WHERE id = ?", sanitizeText(name), req.params.id);
+  if (description !== undefined) await dbRun(db, "UPDATE channels SET description = ? WHERE id = ?", sanitizeText(description), req.params.id);
+  if (pronouns !== undefined) await dbRun(db, "UPDATE channels SET pronouns = ? WHERE id = ?", sanitizeText(pronouns), req.params.id);
   if (banner_url) await dbRun(db, "UPDATE channels SET banner_url = ? WHERE id = ?", banner_url, req.params.id);
   if (avatar_url) await dbRun(db, "UPDATE channels SET avatar_url = ? WHERE id = ?", avatar_url, req.params.id);
-  const updated = await dbGet(db, "SELECT * FROM channels WHERE id = ?", req.params.id);
+  const updated = await dbGet(db,
+    "SELECT id, owner_id, name, description, pronouns, banner_url, avatar_url, created_at FROM channels WHERE id = ?",
+    req.params.id);
   res.json(updated);
 });
 
@@ -749,7 +863,15 @@ app.get("/api/creator/stats", authMiddleware, async (req, res) => {
   res.json(stats);
 });
 
-// Multer setup
+// Multer setup (validação de tipo/limite; extensão derivada do MIME, nunca do nome enviado pelo cliente)
+const ALLOWED_VIDEO_MIME = ['video/mp4','video/webm','video/quicktime','video/x-matroska','video/x-msvideo','video/mpeg','video/x-ms-wmv','video/3gpp','video/mp2t'];
+const ALLOWED_IMAGE_MIME = ['image/png','image/jpeg','image/gif','image/webp'];
+const EXT_BY_MIME = {
+  'video/mp4':'.mp4','video/webm':'.webm','video/quicktime':'.mov','video/x-matroska':'.mkv',
+  'video/x-msvideo':'.avi','video/mpeg':'.mpg','video/x-ms-wmv':'.wmv','video/3gpp':'.3gp','video/mp2t':'.ts',
+  'image/png':'.png','image/jpeg':'.jpg','image/gif':'.gif','image/webp':'.webp'
+};
+
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const dir = path.join(UPLOAD_ROOT, "raw");
@@ -757,14 +879,32 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
+    const ext = EXT_BY_MIME[file.mimetype] || '';
     cb(null, `${uuidv4()}${ext}`);
   },
 });
 
-const upload = multer({ storage });
+function rejectType(file, allowed) {
+  if (!allowed.includes(file.mimetype)) {
+    const err = new Error('Tipo de arquivo não permitido (vídeos: MP4/WebM/MOV/MKV/AVI; imagens: PNG/JPEG/GIF/WebP)');
+    err.statusCode = 400;
+    return err;
+  }
+  return null;
+}
 
-app.post("/api/videos", authMiddleware, upload.single("video"), async (req, res) => {
+const uploadVideo = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(rejectType(file, ALLOWED_VIDEO_MIME)),
+});
+const uploadImage = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(rejectType(file, ALLOWED_IMAGE_MIME)),
+});
+
+app.post("/api/videos", authMiddleware, uploadVideo.single("video"), async (req, res) => {
   const { channelId, title, description } = req.body;
   if (!channelId || !req.file) return res.status(400).json({ error: "Canal e arquivo obrigatórios" });
   const channel = await dbGet(db, "SELECT id, owner_id FROM channels WHERE id = ?", channelId);
@@ -774,8 +914,8 @@ app.post("/api/videos", authMiddleware, upload.single("video"), async (req, res)
   const outputBase = path.join(UPLOAD_ROOT, videoId);
   await fs.mkdir(outputBase, { recursive: true });
 
-  const videoTitle = title && title.trim() ? title.trim() : req.file.originalname;
-  const videoDesc = description && description.trim() ? description.trim() : "";
+  const videoTitle = sanitizeText(title && title.trim() ? title.trim() : req.file.originalname) || "Untitled";
+  const videoDesc = sanitizeText(description && description.trim() ? description.trim() : "");
 
   // === SINGLE HLS: remux source into HLS with stream copy (zero CPU) ===
   const outDir = path.join(outputBase, 'source');
@@ -988,14 +1128,17 @@ app.get("/api/videos/:id/comments", async (req, res) => {
 
 app.post("/api/videos/:id/comments", authMiddleware, async (req, res) => {
   const { text } = req.body;
-  if (!text) return res.status(400).json({ error: "Texto obrigatório" });
+  const cleanText = sanitizeText(text);
+  if (!cleanText) return res.status(400).json({ error: "Texto obrigatório" });
+  const videoExists = await dbGet(db, "SELECT id FROM videos WHERE id = ?", req.params.id);
+  if (!videoExists) return res.status(404).json({ error: "Vídeo não encontrado" });
   const commentId = uuidv4();
   await dbRun(db, 
     "INSERT INTO comments (id, video_id, author_id, text) VALUES (?,?,?,?)",
     commentId,
     req.params.id,
     req.user.id,
-    text
+    cleanText
   );
   res.json({ commentId });
 });
@@ -1005,8 +1148,9 @@ app.patch("/api/comments/:id", authMiddleware, async (req, res) => {
   if (!comment) return res.status(404).json({ error: "Comentário não encontrado" });
   if (comment.author_id !== req.user.id) return res.status(403).json({ error: "Acesso negado" });
   const { text } = req.body;
-  if (!text) return res.status(400).json({ error: "Texto obrigatório" });
-  await dbRun(db, "UPDATE comments SET text = ? WHERE id = ?", text, comment.id);
+  const cleanText = sanitizeText(text);
+  if (!cleanText) return res.status(400).json({ error: "Texto obrigatório" });
+  await dbRun(db, "UPDATE comments SET text = ? WHERE id = ?", cleanText, comment.id);
   res.json({ ok: true });
 });
 
@@ -1082,13 +1226,16 @@ app.get("/api/notifications/unread-count", authMiddleware, async (req, res) => {
 app.post('/api/live/:channelId/chat', authMiddleware, async (req, res) => {
   const { channelId } = req.params;
   const { text } = req.body;
-  if (!text) return res.status(400).json({ error: 'Texto obrigatório' });
+  const cleanText = sanitizeText(text);
+  if (!cleanText) return res.status(400).json({ error: 'Texto obrigatório' });
+  const channelExists = await dbGet(db, 'SELECT id FROM channels WHERE id = ?', channelId);
+  if (!channelExists) return res.status(404).json({ error: 'Canal não encontrado' });
   const user = await dbGet(db, 'SELECT name FROM users WHERE id = ?', req.user.id);
-  const author = user?.name || 'Anonymous';
+  const author = sanitizeText(user?.name) || 'Anonymous';
   const id = uuidv4();
   await dbRun(db,
     'INSERT INTO live_chat_messages (id, channel_id, author, text) VALUES (?,?,?,?)',
-    id, channelId, author, text
+    id, channelId, author, cleanText
   );
   // Also push to in-memory cache so chat-history includes this message
   if (!liveChats[channelId]) liveChats[channelId] = [];
@@ -1096,19 +1243,20 @@ app.post('/api/live/:channelId/chat', authMiddleware, async (req, res) => {
     id,
     username: author,
     author,
-    message: text,
-    text,
+    message: cleanText,
+    text: cleanText,
     timestamp: new Date().toISOString()
   });
   if (liveChats[channelId].length > 200) liveChats[channelId].shift();
   // Emit to all sockets listening to this channel
-  io.to(`live-${channelId}`).emit('new-message', { author, text });
+  io.to(`live-${channelId}`).emit('new-message', { author, text: cleanText });
   res.json({ ok: true });
 });
 
 app.post("/api/live", authMiddleware, async (req, res) => {
   const { channelId, title, description, mode, scheduledAt } = req.body;
-  if (!channelId || !title) return res.status(400).json({ error: "Canal e título obrigatórios" });
+  const cleanTitle = sanitizeText(title);
+  if (!channelId || !cleanTitle) return res.status(400).json({ error: "Canal e título obrigatórios" });
   const channel = await dbGet(db, "SELECT id, owner_id, stream_key FROM channels WHERE id = ?", channelId);
   if (!channel || channel.owner_id !== req.user.id) return res.status(403).json({ error: "Acesso negado" });
 
@@ -1128,7 +1276,7 @@ app.post("/api/live", authMiddleware, async (req, res) => {
 
   await dbRun(db,
     "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, scheduled_at) VALUES (?,?,?,?,?,?,?,?)",
-    liveId, channelId, title, description || "", status, streamKey, flvId, scheduledAtVal
+    liveId, channelId, cleanTitle, sanitizeText(description) || "", status, streamKey, flvId, scheduledAtVal
   );
   res.json({ liveId, streamKey, flvId, status, scheduledAt: scheduledAtVal });
 });
@@ -1141,7 +1289,8 @@ app.post("/api/channels/:id/schedule-live", authMiddleware, async (req, res) => 
   const channel = await dbGet(db, "SELECT id, owner_id FROM channels WHERE id = ?", req.params.id);
   if (!channel || channel.owner_id !== req.user.id) return res.status(403).json({ error: "Acesso negado" });
   const { title, description, scheduledAt } = req.body;
-  if (!title || !scheduledAt) return res.status(400).json({ error: "Título e horário obrigatórios" });
+  const cleanTitle = sanitizeText(title);
+  if (!cleanTitle || !scheduledAt) return res.status(400).json({ error: "Título e horário obrigatórios" });
   
   const streamKey = channel.stream_key || uuidv4().replace(/-/g, "");
   const flvId = uuidv4().replace(/-/g, "").substring(0, 16);
@@ -1149,7 +1298,7 @@ app.post("/api/channels/:id/schedule-live", authMiddleware, async (req, res) => 
   
   await dbRun(db,
     "INSERT INTO live_streams (id, channel_id, title, description, status, stream_key, flv_id, scheduled_at) VALUES (?,?,?,?,?,?,?,?)",
-    liveId, req.params.id, title, description || "", "scheduled", streamKey, flvId, new Date(scheduledAt).toISOString().replace('T', ' ').substring(0, 19)
+    liveId, req.params.id, cleanTitle, sanitizeText(description) || "", "scheduled", streamKey, flvId, new Date(scheduledAt).toISOString().replace('T', ' ').substring(0, 19)
   );
   res.json({ liveId, streamKey, flvId, status: 'scheduled', scheduledAt });
 });
@@ -1168,7 +1317,8 @@ app.post("/api/live/:id/cancel", authMiddleware, async (req, res) => {
 // Get live status with timing info
 app.get("/api/live/:channelId/status", async (req, res) => {
   const live = await dbGet(db,
-    `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar
+    `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.ended_at, l.viewer_count,
+            c.name as channel_name, c.avatar_url as channel_avatar
      FROM live_streams l
      JOIN channels c ON c.id = l.channel_id
      WHERE l.channel_id = ? AND l.status IN ('scheduled','ready','waiting','live','delayed')`,
@@ -1195,7 +1345,6 @@ app.get("/api/live/:channelId/status", async (req, res) => {
     title: live.title,
     description: live.description,
     status: live.status,
-    stream_key: live.stream_key,
     flv_id: live.flv_id,
     scheduled_at: live.scheduled_at,
     delay_minutes: delayMinutes,
@@ -1204,13 +1353,17 @@ app.get("/api/live/:channelId/status", async (req, res) => {
 });
 
 app.get("/api/live/:id", async (req, res) => {
-  const live = await dbGet(db, "SELECT * FROM live_streams WHERE id = ?", req.params.id);
+  const live = await dbGet(db,
+    "SELECT id, channel_id, title, description, status, flv_id, scheduled_at, started_at, ended_at, viewer_count FROM live_streams WHERE id = ?",
+    req.params.id);
   if (!live) return res.status(404).json({ error: "Live não encontrada" });
   res.json(live);
 });
 
 app.get("/api/channels/:id/live", async (req, res) => {
-  const live = await dbGet(db, "SELECT * FROM live_streams WHERE channel_id = ? AND status IN ('scheduled','ready','waiting','live','delayed') ORDER BY rowid DESC", req.params.id);
+  const live = await dbGet(db,
+    "SELECT id, channel_id, title, status, flv_id, scheduled_at, started_at, ended_at FROM live_streams WHERE channel_id = ? AND status IN ('scheduled','ready','waiting','live','delayed') ORDER BY rowid DESC",
+    req.params.id);
   res.json(live || null);
 });
 
@@ -1225,14 +1378,15 @@ app.delete("/api/live/:id", authMiddleware, async (req, res) => {
 });
 
 app.get("/api/live/:id/viewers", async (req, res) => {
-  const live = await dbGet(db, "SELECT * FROM live_streams WHERE id = ? OR channel_id = ?", req.params.id, req.params.id);
+  const live = await dbGet(db, "SELECT viewer_count, channel_id FROM live_streams WHERE id = ? OR channel_id = ?", req.params.id, req.params.id);
   if (!live) return res.json({ count: 0 });
   res.json({ count: live.viewer_count || 1 });
 });
 
 app.get("/api/live", async (req, res) => {
   const lives = await dbAll(db,
-    `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar
+    `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.viewer_count,
+            c.name as channel_name, c.avatar_url as channel_avatar
      FROM live_streams l
      JOIN channels c ON c.id = l.channel_id
      WHERE l.status IN ('live','waiting','delayed','scheduled','ready')
@@ -1263,7 +1417,7 @@ app.post("/api/webhook/live-start", async (req, res) => {
     "INSERT INTO live_streams (id, channel_id, title, description, status, started_at) VALUES (?,?,?,?,?,datetime('now'))",
     liveId,
     channelId,
-    title || "Live",
+    sanitizeText(title) || "Live",
     "Transmissão ao vivo"
   );
   
@@ -1362,7 +1516,9 @@ const result = videos.map(v => ({
 res.json(result);
 });
 
-app.use("/static", express.static(UPLOAD_ROOT));
+app.use("/static", express.static(UPLOAD_ROOT, {
+  setHeaders: (res) => res.setHeader("X-Content-Type-Options", "nosniff")
+}));
 
 // IMPORTANT: /api/users/me must come BEFORE /api/users/:id
 app.get("/api/users/me", authMiddleware, async (req, res) => {
@@ -1371,7 +1527,7 @@ app.get("/api/users/me", authMiddleware, async (req, res) => {
 });
 
 app.get("/api/users/:id", async (req, res) => {
-  const user = await dbGet(db, "SELECT id, name, email FROM users WHERE id = ?", req.params.id);
+  const user = await dbGet(db, "SELECT id, name, bio, pronouns, avatar_url FROM users WHERE id = ?", req.params.id);
   if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
   res.json(user);
 });
@@ -1381,6 +1537,8 @@ app.post("/api/videos/:id/like", authMiddleware, async (req, res) => {
   if (!type || !["like", "dislike"].includes(type)) {
     return res.status(400).json({ error: "Tipo inválido" });
   }
+  const videoExists = await dbGet(db, "SELECT id FROM videos WHERE id = ?", req.params.id);
+  if (!videoExists) return res.status(404).json({ error: "Vídeo não encontrado" });
   await dbRun(db,
     "INSERT OR REPLACE INTO video_likes (user_id, video_id, type) VALUES (?,?,?)",
     req.user.id, req.params.id, type
@@ -1409,18 +1567,19 @@ app.delete("/api/videos/:id/like", authMiddleware, async (req, res) => {
 
 app.patch("/api/users/me", authMiddleware, async (req, res) => {
   const { name, password, bio, pronouns, avatar_url } = req.body;
+  if (avatar_url && !isSafeUrl(avatar_url)) return res.status(400).json({ error: "avatar_url inválido (use uma URL http(s) ou /static/...)" });
   if (name) {
-    await dbRun(db, "UPDATE users SET name = ? WHERE id = ?", name, req.user.id);
+    await dbRun(db, "UPDATE users SET name = ? WHERE id = ?", sanitizeText(name), req.user.id);
   }
   if (password) {
     const hash = await bcrypt.hash(password, 12);
     await dbRun(db, "UPDATE users SET password_hash = ? WHERE id = ?", hash, req.user.id);
   }
   if (bio !== undefined) {
-    await dbRun(db, "UPDATE users SET bio = ? WHERE id = ?", bio, req.user.id);
+    await dbRun(db, "UPDATE users SET bio = ? WHERE id = ?", sanitizeText(bio), req.user.id);
   }
   if (pronouns !== undefined) {
-    await dbRun(db, "UPDATE users SET pronouns = ? WHERE id = ?", pronouns, req.user.id);
+    await dbRun(db, "UPDATE users SET pronouns = ? WHERE id = ?", sanitizeText(pronouns), req.user.id);
   }
   if (avatar_url) {
     await dbRun(db, "UPDATE users SET avatar_url = ? WHERE id = ?", avatar_url, req.user.id);
@@ -1430,9 +1589,9 @@ app.patch("/api/users/me", authMiddleware, async (req, res) => {
 });
 
 // Upload user avatar
-app.post("/api/users/me/avatar", authMiddleware, upload.single("avatar"), async (req, res) => {
+app.post("/api/users/me/avatar", authMiddleware, uploadImage.single("avatar"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Arquivo obrigatório" });
-  const ext = path.extname(req.file.originalname);
+  const ext = EXT_BY_MIME[req.file.mimetype] || '';
   const filename = `avatar_${req.user.id}${ext}`;
   const dest = path.join(__dirname, "uploads", "avatars", filename);
   await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -1443,11 +1602,11 @@ app.post("/api/users/me/avatar", authMiddleware, upload.single("avatar"), async 
 });
 
 // Upload channel avatar/banner
-app.post("/api/channels/:id/avatar", authMiddleware, upload.single("avatar"), async (req, res) => {
+app.post("/api/channels/:id/avatar", authMiddleware, uploadImage.single("avatar"), async (req, res) => {
   const channel = await dbGet(db, "SELECT id FROM channels WHERE id = ? AND owner_id = ?", req.params.id, req.user.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   if (!req.file) return res.status(400).json({ error: "Arquivo obrigatório" });
-  const ext = path.extname(req.file.originalname);
+  const ext = EXT_BY_MIME[req.file.mimetype] || '';
   const filename = `channel_${req.params.id}_avatar${ext}`;
   const dest = path.join(__dirname, "uploads", "channels", filename);
   await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -1457,11 +1616,11 @@ app.post("/api/channels/:id/avatar", authMiddleware, upload.single("avatar"), as
   res.json({ avatar_url: avatarUrl });
 });
 
-app.post("/api/channels/:id/banner", authMiddleware, upload.single("banner"), async (req, res) => {
+app.post("/api/channels/:id/banner", authMiddleware, uploadImage.single("banner"), async (req, res) => {
   const channel = await dbGet(db, "SELECT id FROM channels WHERE id = ? AND owner_id = ?", req.params.id, req.user.id);
   if (!channel) return res.status(404).json({ error: "Canal não encontrado" });
   if (!req.file) return res.status(400).json({ error: "Arquivo obrigatório" });
-  const ext = path.extname(req.file.originalname);
+  const ext = EXT_BY_MIME[req.file.mimetype] || '';
   const filename = `channel_${req.params.id}_banner${ext}`;
   const dest = path.join(__dirname, "uploads", "channels", filename);
   await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -1473,18 +1632,14 @@ app.post("/api/channels/:id/banner", authMiddleware, upload.single("banner"), as
 
 // Page routes - always render without user, let client handle auth
 function getUserFromReq(req) {
-  // For API calls, check header, query, or cookie
+  // For API calls, check header or cookie (nunca query string, para evitar vazamento por Referer/histórico)
   let token = req.headers.authorization?.replace("Bearer ", "");
-  if (!token) token = req.query._token;
   if (!token) token = req.cookies?.token;
-  console.log("getUserFromReq - token:", token?.substring(0, 20) + "...");
   if (!token) return null;
   try {
     const user = jwt.verify(token, JWT_SECRET);
-    console.log("getUserFromReq - verified user:", user?.name);
     return user;
   } catch (err) {
-    console.log("getUserFromReq - error:", err.message);
     return null;
   }
 }
@@ -1537,7 +1692,7 @@ app.get("/", async (req, res) => {
   }
 
   const lives = await dbAll(db,
-    `SELECT l.id, l.title, l.stream_key, l.flv_id, l.status, l.scheduled_at, c.id as channel_id, c.name as channel, c.avatar_url as channel_avatar
+    `SELECT l.id, l.title, l.flv_id, l.status, l.scheduled_at, c.id as channel_id, c.name as channel, c.avatar_url as channel_avatar
      FROM live_streams l
      JOIN channels c ON c.id = l.channel_id
      WHERE l.status IN ('live','waiting','delayed','scheduled','ready')
@@ -1548,7 +1703,6 @@ app.get("/", async (req, res) => {
     title: l.title,
     channel: l.channel,
     channelAvatar: l.channel_avatar,
-    streamKey: l.stream_key,
     status: l.status,
     scheduledAt: l.scheduled_at,
     type: 'live'
@@ -1646,7 +1800,9 @@ app.get("/channel/:id", async (req, res) => {
   const user = getUserFromReq(req);
   
   const channel = await dbGet(db, 
-    "SELECT c.*, (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count FROM channels c WHERE c.id = ?", 
+    `SELECT c.id, c.owner_id, c.name, c.description, c.pronouns, c.banner_url, c.avatar_url,
+            (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count
+     FROM channels c WHERE c.id = ?`, 
     req.params.id);
   
   if (!channel) return res.status(404).send("Canal não encontrado");
@@ -1656,8 +1812,8 @@ app.get("/channel/:id", async (req, res) => {
     req.params.id);
   
   const live = await dbGet(db,
-    `SELECT l.*, c.stream_key FROM live_streams l 
-     JOIN channels c ON c.id = l.channel_id 
+    `SELECT l.id, l.channel_id, l.title, l.status, l.flv_id, l.scheduled_at
+     FROM live_streams l 
      WHERE l.channel_id = ? AND l.status IN ('live','waiting','scheduled','ready','delayed')
      ORDER BY CASE l.status WHEN 'live' THEN 0 WHEN 'waiting' THEN 1 WHEN 'scheduled' THEN 2 WHEN 'ready' THEN 3 ELSE 4 END, l.scheduled_at ASC`,
     req.params.id);
@@ -1675,7 +1831,9 @@ app.get("/user/:id", async (req, res) => {
   if (!profileUser) return res.status(404).send("Usuário não encontrado");
   
   const channels = await dbAll(db,
-    "SELECT c.*, (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count FROM channels c WHERE c.owner_id = ?",
+    `SELECT c.id, c.name, c.description, c.pronouns, c.banner_url, c.avatar_url,
+            (SELECT COUNT(*) FROM videos WHERE channel_id = c.id) as video_count
+     FROM channels c WHERE c.owner_id = ?`,
     req.params.id);
   
   // Check if current user owns this profile
@@ -1693,7 +1851,8 @@ app.get("/live/:channelId", async (req, res) => {
   const { channelId } = req.params;
   
   let live = await dbGet(db, 
-    `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar, c.stream_key, c.pronouns as channel_pronouns
+    `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.ended_at, l.viewer_count,
+            c.name as channel_name, c.avatar_url as channel_avatar, c.pronouns as channel_pronouns
      FROM live_streams l 
      JOIN channels c ON l.channel_id = c.id 
      WHERE l.channel_id = ? AND l.status IN ('live','waiting','scheduled','ready','delayed')
@@ -1702,7 +1861,8 @@ app.get("/live/:channelId", async (req, res) => {
   
   if (!live) {
     live = await dbGet(db, 
-      `SELECT l.*, c.name as channel_name, c.avatar_url as channel_avatar, c.stream_key, c.pronouns as channel_pronouns
+      `SELECT l.id, l.channel_id, l.title, l.description, l.status, l.flv_id, l.scheduled_at, l.started_at, l.ended_at, l.viewer_count,
+              c.name as channel_name, c.avatar_url as channel_avatar, c.pronouns as channel_pronouns
        FROM live_streams l 
        JOIN channels c ON l.channel_id = c.id 
        WHERE l.channel_id = ? AND l.status = 'ended'
@@ -1757,6 +1917,17 @@ app.get("/creator", async (req, res) => {
   res.render("creator", { channels, videos, stats, user, API: "http://localhost:4000/api" });
 });
 
+// Error handler global (evita que erros em rotas async derrubem o processo)
+app.use((err, req, res, next) => {
+  console.error("[ERROR]", err?.message || err);
+  if (res.headersSent) return next(err);
+  const status = Number.isInteger(err?.statusCode) ? err.statusCode : 500;
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'Arquivo excede o tamanho máximo permitido' : `Erro no upload: ${err.code}` });
+  }
+  res.status(status).json({ error: status === 400 ? (err?.message || 'Requisição inválida') : 'Erro interno' });
+});
+
 // Socket.IO setup
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
@@ -1764,6 +1935,21 @@ const io = new Server(httpServer, {
 });
 
 const liveChats = {};
+
+io.use((socket, next) => {
+  try {
+    let token = socket.handshake.auth?.token;
+    if (!token) {
+      const cookieStr = socket.handshake.headers.cookie || '';
+      const match = cookieStr.match(/(?:^|;\s*)token=([^;]*)/);
+      token = match ? match[1] : undefined;
+    }
+    socket.user = token ? jwt.verify(token, JWT_SECRET) : null;
+  } catch {
+    socket.user = null;
+  }
+  next();
+});
 
 io.on("connection", (socket) => {
   console.log("[SOCKET] Cliente conectado:", socket.id);
@@ -1790,24 +1976,36 @@ io.on("connection", (socket) => {
   });
   
   socket.on("send-message", async (data) => {
-    const { channelId, username, message, avatar } = data;
-    const msgData = {
-      id: uuidv4(),
-      username,
-      message,
-      avatar,
-      timestamp: new Date().toISOString()
-    };
-    // Persist message
-    await dbRun(db,
-      "INSERT INTO live_chat_messages (id, channel_id, author, text) VALUES (?,?,?,?)",
-      msgData.id, channelId, username, message
-    );
-    // Keep in‑memory cache (optional)
-    if (!liveChats[channelId]) liveChats[channelId] = [];
-    liveChats[channelId].push(msgData);
-    if (liveChats[channelId].length > 200) liveChats[channelId].shift();
-    io.to(`live-${channelId}`).emit("new-message", msgData);
+    if (!socket.user) return socket.emit('error', 'Autenticação necessária');
+    const { channelId, message } = data;
+    const cleanText = sanitizeText(message);
+    if (!cleanText) return socket.emit('error', 'Texto obrigatório');
+    const author = sanitizeText(socket.user.name) || 'Anonymous';
+    try {
+      const channelExists = await dbGet(db, 'SELECT id FROM channels WHERE id = ?', channelId);
+      if (!channelExists) return socket.emit('error', 'Canal não encontrado');
+      const msgData = {
+        id: uuidv4(),
+        username: author,
+        author,
+        message: cleanText,
+        text: cleanText,
+        timestamp: new Date().toISOString()
+      };
+      // Persist message
+      await dbRun(db,
+        "INSERT INTO live_chat_messages (id, channel_id, author, text) VALUES (?,?,?,?)",
+        msgData.id, channelId, author, cleanText
+      );
+      // Keep in‑memory cache (optional)
+      if (!liveChats[channelId]) liveChats[channelId] = [];
+      liveChats[channelId].push(msgData);
+      if (liveChats[channelId].length > 200) liveChats[channelId].shift();
+      io.to(`live-${channelId}`).emit("new-message", msgData);
+    } catch (err) {
+      console.error('[SOCKET] send-message falhou:', err?.message || err);
+      socket.emit('error', 'Erro ao enviar mensagem');
+    }
   });
   
   socket.on("disconnect", () => {
